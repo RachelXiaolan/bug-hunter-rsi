@@ -1,0 +1,20 @@
+name = "bug-hunter-rsi"
+main = "src/index.js"
+compatibility_date = "2026-09-23"
+
+[vars]
+HUNT_TARGET_ORIGIN = "https://bug-hunter-rsi.rachel-lu.workers.dev"
+
+[triggers]
+crons = ["0 1 * * *"]
+
+[assets]
+directory = "."
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bug-hunter-rsi"
+database_id = "62af57d8-c82c-47b0-8faf-6cc03bb02e8d"
+migrations_dir = "migrations"

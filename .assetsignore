@@ -1,0 +1,9 @@
+tests/
+*.md
+*.toml
+*.json
+src/
+migrations/
+node_modules/
+.wrangler/
+.assetsignore
