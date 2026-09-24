@@ -15,7 +15,8 @@ export function createLlm({ apiKey, endpoint = DEFAULT_ENDPOINT, model = DEFAULT
   return {
     enabled: Boolean(apiKey),
     model,
-    async json(system, user, { maxTokens = 4096, timeoutMs = 45000 } = {}) {
+    // Reasoning models spend part of max_tokens thinking before they answer, so budgets are generous.
+    async json(system, user, { maxTokens = 16000, timeoutMs = 120000 } = {}) {
       if (!apiKey) return { status: "secret-not-configured", data: null };
       try {
         const response = await fetcher(endpoint, {
@@ -30,11 +31,16 @@ export function createLlm({ apiKey, endpoint = DEFAULT_ENDPOINT, model = DEFAULT
         });
         if (!response.ok) return { status: `provider-http-${response.status}`, data: null };
         const payload = await response.json().catch(() => null);
-        const content = payload?.choices?.[0]?.message?.content;
+        const choice = payload?.choices?.[0];
         const tokens = Number(payload?.usage?.total_tokens || 0);
-        if (!content) return { status: "provider-empty-content", data: null, tokens };
-        try { return { status: "ready", data: parseJsonContent(content), tokens }; }
-        catch { return { status: "provider-content-not-json", data: null, tokens }; }
+        const content = choice?.message?.content;
+        const reasoning = choice?.message?.reasoning_content || choice?.message?.reasoning;
+        if (!content && !reasoning) return { status: `provider-empty-content-${choice?.finish_reason || "unknown"}`, data: null, tokens };
+        for (const candidate of [content, reasoning]) {
+          if (!candidate) continue;
+          try { return { status: "ready", data: parseJsonContent(candidate), tokens }; } catch { /* try the next field */ }
+        }
+        return { status: content ? "provider-content-not-json" : `provider-empty-content-${choice?.finish_reason || "unknown"}`, data: null, tokens };
       } catch (error) {
         return { status: error?.name === "TimeoutError" ? "provider-timeout" : "provider-network-error", data: null };
       }
