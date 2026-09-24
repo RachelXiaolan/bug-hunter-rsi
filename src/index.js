@@ -2,6 +2,7 @@ import { GOALS, LIMITS, OPPORTUNITY_TYPES, PROFILES, REPO_FEATURES } from "./con
 import { createGitHub, parsePullUrl } from "./github.js";
 import { budgeted, createLlm } from "./llm.js";
 import { ensureGenesis, loadPlaybooks, tick } from "./pipeline.js";
+import { buildRsiStatus } from "./rsi-status.js";
 
 const VERSION = "2.1.0";
 const ATTEMPT_STATUSES = new Set(["abandoned", "tests-failed", "ready-for-review", "submitted"]);
@@ -283,6 +284,14 @@ const worker = {
         return response;
       }
       return json({ ok: true, service: "bug-hunter-rsi", version: VERSION });
+    }
+    if (pathname === "/rsi-status.json") {
+      if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+      if (!env.DB) return json({ error: "D1 database binding unavailable" }, 503);
+      const response = json(await buildRsiStatus(env.DB));
+      response.headers.set("access-control-allow-origin", "*");
+      response.headers.set("cache-control", "public, max-age=60");
+      return response;
     }
     if (!pathname.startsWith("/api/")) {
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Assets binding unavailable", { status: 503 });
