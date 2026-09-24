@@ -2,7 +2,7 @@ name = "bug-hunter-rsi"
 main = "src/index.js"
 compatibility_date = "2026-09-23"
 
-# Secrets (never put them here): CMD_API_KEY, GITHUB_TOKEN (optional, read-only), HUNTER_TOKEN
+# Secrets (set as type Secret in the dashboard, never here): CMD_API_KEY, GITHUB_TOKEN, HUNTER_TOKEN
 [vars]
 # Team repos. Default write policy is readonly; append :review or :pr to allow more.
 INTERNAL_REPOS = ""

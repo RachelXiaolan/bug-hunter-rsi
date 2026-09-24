@@ -37,14 +37,13 @@
 
 ## 部署
 
+Cloudflare Worker 已连接本仓库（Settings → Builds），推送到 `main` 会自动执行：
+
 ```bash
-npx wrangler secret put CMD_API_KEY
-npx wrangler secret put HUNTER_TOKEN
-npx wrangler secret put GITHUB_TOKEN   # 可选，只读
-# 在 wrangler.toml 里填 INTERNAL_REPOS / OSS_REPOS
-npx wrangler d1 migrations apply bug-hunter-rsi --remote
-npx wrangler deploy
+npx wrangler d1 migrations apply bug-hunter-rsi --remote && npx wrangler deploy
 ```
+
+在 Cloudflare → Worker → Settings → Variables and Secrets 中以 **Secret** 类型添加 `CMD_API_KEY`、`HUNTER_TOKEN`、`GITHUB_TOKEN`（不要写进 `wrangler.toml`）。开关与成本上限写在 `wrangler.toml` 的 `[vars]`。
 
 旧版合成实验的表（`evolution_*`、`live_hunt_*`、`specimens`、`runs` 等）不再读写，确认没用后可以手动删除。
 
@@ -53,12 +52,12 @@ npx wrangler deploy
 在一台云端 Linux 机器上一次性安装（会装 git、Node、Python、Go、Docker 并加每 2 小时一次的定时任务）：
 
 ```bash
-BRANCH=main bash executor/setup-linux.sh
+bash executor/setup-linux.sh
 # 然后编辑 ~/.bug-hunter/env，填 HUNTER_TOKEN、CMD_API_KEY、GH_PR_TOKEN
 ~/.bug-hunter/run.sh    # 手动先跑一次，日志在 ~/.bug-hunter/executor.log
 ```
 
-`GH_PR_TOKEN` 是提 PR 账号的 classic token，只勾 `public_repo`。执行器会运行目标仓库的测试，有 Docker 时在容器里跑，只挂载代码目录。
+`GH_PR_TOKEN` 与 Cloudflare 的 `GITHUB_TOKEN` 可以是同一个 classic token：只做公开仓库勾 `public_repo`；需要读团队私有仓库时勾 `repo`（组织开启 SSO 时还需在令牌页 Configure SSO 授权）。执行器会运行目标仓库的测试，有 Docker 时在容器里跑，只挂载代码目录。
 
 ## 本地验证
 
