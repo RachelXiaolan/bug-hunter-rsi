@@ -138,7 +138,7 @@ async function askForPatch(llm, { task, context, lessons, prStyle, policy, issue
     `Files:\n${context.files.map((file) => `--- ${file.path}\n${file.content}`).join("\n\n") || "(no evidence files; choose files from the tree)"}`,
     `Tree (first 300 files):\n${context.tree}`,
   ].filter(Boolean).join("\n\n");
-  return llm.json(system, user, { maxTokens: 12000, timeoutMs: 180000 });
+  return llm.json(system, user, { maxTokens: 32000, timeoutMs: 300000 });
 }
 
 async function selfReview(llm, { task, diff, testLog }) {
@@ -148,7 +148,7 @@ async function selfReview(llm, { task, diff, testLog }) {
     "Return JSON only: {\"approve\":true|false,\"concerns\":[\"...\"]}",
   ].join("\n");
   const user = `Repository ${task.repo}\nProblem: ${task.title}\n${task.summary}\n\nDiff:\n${diff.slice(0, 20000)}\n\nTest output (tail):\n${testLog.slice(-2000)}`;
-  const answer = await llm.json(system, user, { maxTokens: 2000 });
+  const answer = await llm.json(system, user, { maxTokens: 8000 });
   return { approve: answer.data?.approve === true, concerns: (answer.data?.concerns || []).map(String).slice(0, 5), status: answer.status };
 }
 
@@ -282,7 +282,7 @@ export async function followUp({ item, llm, gw, me, api, ctx }) {
     `New activity:\n${activity.map((row) => `[${row.where}] ${row.author}${row.bot ? " (bot)" : ""}: ${row.body}`).join("\n\n") || "(none)"}`,
     `Failing checks:\n${failing.map((run) => `${run.name}: ${run.title}\n${run.summary}`).join("\n\n") || "(none)"}`,
   ].join("\n\n");
-  const answer = await llm.json(system, user, { maxTokens: 12000, timeoutMs: 180000 });
+  const answer = await llm.json(system, user, { maxTokens: 32000, timeoutMs: 300000 });
   const decision = answer.data || { action: "wait" };
 
   if (decision.action === "patch" && Array.isArray(decision.files) && decision.files.length) {
