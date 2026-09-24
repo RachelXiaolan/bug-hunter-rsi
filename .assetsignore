@@ -7,3 +7,4 @@ migrations/
 node_modules/
 .wrangler/
 .assetsignore
+executor/

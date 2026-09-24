@@ -1,146 +1,80 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  DEFAULT_POLICY,
-  MAX_PROBES_PER_CANDIDATE,
-  allocateBudget,
-  buildCandidates,
-  decideChampion,
-  runEvolutionCycle,
-} from "../src/evolution.js";
+import { DEFAULT_PLAYBOOK, LIMITS, clonePlaybook } from "../src/config.js";
+import { applyReflection, evolve, fitPriors, fitWeights, splitSamples } from "../src/evolution.js";
 
-test("budget allocation is deterministic, integer, bounded, and conserves the full budget", () => {
-  const weights = { boundary: 50, sequence: 25, concurrency: 15, reduction: 10 };
-  const first = allocateBudget(weights, 37);
-  const second = allocateBudget(weights, 37);
-
-  assert.deepEqual(first, second);
-  assert.equal(Object.values(first).reduce((sum, value) => sum + value, 0), 37);
-  assert.ok(Object.values(first).every(Number.isInteger));
-  assert.ok(Object.values(first).every((value) => value >= 0));
-});
-
-test("five candidates are reproducible per generation and change across generations", () => {
-  const options = { seed: "2026-09-23" };
-  const dayOne = buildCandidates(DEFAULT_POLICY, { generation: 1, ...options });
-  const repeat = buildCandidates(DEFAULT_POLICY, { generation: 1, ...options });
-  const dayTwo = buildCandidates(DEFAULT_POLICY, { generation: 2, ...options });
-
-  assert.equal(dayOne.length, 5);
-  assert.deepEqual(dayOne, repeat);
-  assert.notDeepEqual(dayOne, dayTwo);
-  for (const candidate of dayOne) {
-    assert.equal(Object.values(candidate.weights).reduce((sum, value) => sum + value, 0), 100);
-    assert.ok(Object.values(candidate.weights).every((value) => value >= 5 && value <= 50));
-  }
-});
-
-test("candidate weights stay within fifty percent so each split retains operator diversity", () => {
-  const candidates = buildCandidates({
-    ...DEFAULT_POLICY,
-    weights: { boundary: 70, sequence: 10, concurrency: 10, reduction: 10 },
-  }, { generation: 2, seed: "bounded-policy" });
-
-  assert.ok(candidates.every((candidate) => Object.values(candidate.weights).every((value) => value >= 5 && value <= 50)));
-  assert.ok(candidates.every((candidate) => Object.values(candidate.weights).reduce((sum, value) => sum + value, 0) === 100));
-});
-
-test("the exploit candidate reallocates weight from historically weak to productive operators", () => {
-  const candidates = buildCandidates(DEFAULT_POLICY, {
-    generation: 4,
-    seed: "history-feedback",
-    recentHistory: [{
-      operatorStats: {
-        boundary: { probes: 10, value: 50 },
-        sequence: { probes: 10, value: 30 },
-        concurrency: { probes: 10, value: 0 },
-        reduction: { probes: 10, value: 10 },
-      },
-    }],
-  });
-
-  assert.ok(candidates[0].weights.boundary > DEFAULT_POLICY.weights.boundary);
-  assert.ok(candidates[0].weights.concurrency < DEFAULT_POLICY.weights.concurrency);
-});
-
-test("champion selection rejects regression failures, holdout regressions, and ties", () => {
-  const decision = decideChampion(
-    { id: "current", score: 50, holdoutScore: 40 },
-    [
-      { id: "regression-fail", score: 99, holdoutScore: 99, regressionPassed: 9, regressionTotal: 10 },
-      { id: "holdout-fail", score: 90, holdoutScore: 39, regressionPassed: 10, regressionTotal: 10 },
-      { id: "tie", score: 50, holdoutScore: 40, regressionPassed: 10, regressionTotal: 10 },
-      { id: "winner", score: 60, holdoutScore: 41, regressionPassed: 10, regressionTotal: 10 },
-    ],
-  );
-
-  assert.equal(decision.promoted, true);
-  assert.equal(decision.champion.id, "winner");
-  assert.deepEqual(decision.rejections.map(({ id }) => id), ["regression-fail", "holdout-fail", "tie"]);
-});
-
-test("an evolution cycle retains known specimens and enforces the fixed per-candidate budget", () => {
-  const knownSpecimens = ["coupon-negative-value", "zero-width-recipient"];
-  const result = runEvolutionCycle({
-    policy: DEFAULT_POLICY,
-    generation: 1,
-    seed: "2026-09-23",
-    knownSpecimens,
-  });
-
-  assert.equal(result.candidates.length, 5);
-  assert.ok(result.branchesTotal > 0);
-  assert.ok(result.branchesCovered <= result.branchesTotal);
-  assert.ok(result.candidates.every(({ probes }) => probes <= MAX_PROBES_PER_CANDIDATE));
-  assert.ok(result.regressionTotal >= knownSpecimens.length);
-  assert.ok(result.regressionTotal >= 3, "the golden regression corpus is never empty");
-  assert.equal(result.regressionPassed, result.regressionTotal);
-  for (const specimenId of knownSpecimens) assert.ok(result.regressionSpecimens.includes(specimenId));
-  assert.ok(["promoted", "rejected"].includes(result.decision));
-});
-
-test("each generation contributes stable but novel inputs and advances evidence-backed rule versions", () => {
-  const first = runEvolutionCycle({ policy: DEFAULT_POLICY, generation: 1, seed: "2026-09-23" });
-  const next = runEvolutionCycle({ policy: first.champion.policy, generation: 2, seed: "2026-09-24" });
-  const firstSignatures = first.testedCases.map(({ signature }) => signature);
-  const nextSignatures = next.testedCases.map(({ signature }) => signature);
-
-  assert.ok(first.testedCases.length > 0);
-  assert.equal(new Set(firstSignatures).size, firstSignatures.length);
-  assert.notDeepEqual(firstSignatures, nextSignatures);
-  assert.ok(first.testCasesAdded > 0);
-  assert.ok(first.recommendationRules.length > 0);
-  assert.ok(first.champion.policy.boundaryLibraryVersion > DEFAULT_POLICY.boundaryLibraryVersion);
-  assert.ok(first.champion.policy.recommendationRulesVersion > DEFAULT_POLICY.recommendationRulesVersion);
-});
-
-test("generation-one strategy evaluations are paired and can promote a guarded improvement", () => {
-  const options = {
-    policy: DEFAULT_POLICY,
-    generation: 1,
-    seed: "2026-09-23:g1",
+function sample(index, overrides = {}) {
+  const merge = index % 2 === 0;
+  return {
+    id: `opp-${index}`,
+    reward: merge ? 1 : -0.5,
+    profile: "internal-app",
+    type: merge ? "accuracy" : "ux-ui",
+    playbookVersion: 1,
+    features: { externalMergeRate: merge ? 0.9 : 0.1, responsiveness: 0.5, activity: 0.5, helpWanted: 0.2, openIssueLoad: 0.3, popularity: merge ? 0.2 : 0.9, testsPresent: 1, contributingGuide: 0 },
+    ...overrides,
   };
-  const result = runEvolutionCycle(options);
-  const repeat = runEvolutionCycle(options);
+}
 
-  assert.deepEqual(repeat.baseline, result.baseline);
-  assert.deepEqual(repeat.candidates.map(({ score, holdoutScore }) => ({ score, holdoutScore })),
-    result.candidates.map(({ score, holdoutScore }) => ({ score, holdoutScore })));
-  assert.ok(result.candidates.every((candidate) => candidate.probes === MAX_PROBES_PER_CANDIDATE));
-  assert.ok(result.candidates.some((candidate) =>
-    candidate.score > result.baseline.score && candidate.holdoutScore >= result.baseline.holdoutScore));
-  assert.equal(result.decision, "promoted");
+test("no evidence, no evolution", () => {
+  const result = evolve({ champion: clonePlaybook(), samples: [sample(0), sample(1)], nextVersion: 2 });
+  assert.equal(result.decision, "insufficient-evidence");
+  assert.equal(result.candidate, undefined);
 });
 
-test("each generation evaluates a deterministic but changing training and holdout window", () => {
-  const results = Array.from({ length: 7 }, (_, index) => runEvolutionCycle({
-    policy: DEFAULT_POLICY,
-    generation: index + 1,
-    seed: `2026-09-${String(23 + index).padStart(2, "0")}:g${index + 1}`,
-  }));
-  const trainingScores = new Set(results.map(({ baseline }) => baseline.score));
-  const holdoutScores = new Set(results.map(({ baseline }) => baseline.holdoutScore));
+test("train and holdout never overlap", () => {
+  const { train, holdout } = splitSamples(Array.from({ length: 30 }, (_, index) => sample(index)));
+  assert.equal(train.length + holdout.length, 30);
+  assert.ok(holdout.length > 0 && train.length > 0);
+  assert.equal(train.filter((item) => holdout.includes(item)).length, 0);
+});
 
-  assert.ok(trainingScores.size > 1, "training should explore changing deterministic windows across generations");
-  assert.ok(holdoutScores.size > 1, "the independent holdout window should change across generations too");
+test("weights move toward features that predict good outcomes", () => {
+  const samples = Array.from({ length: 20 }, (_, index) => sample(index));
+  const weights = fitWeights(samples);
+  assert.ok(weights.externalMergeRate > DEFAULT_PLAYBOOK.repoSelection.weights.externalMergeRate);
+  assert.ok(weights.popularity < DEFAULT_PLAYBOOK.repoSelection.weights.popularity);
+});
+
+test("type priors follow what actually worked for that profile", () => {
+  const priors = fitPriors(Array.from({ length: 20 }, (_, index) => sample(index)));
+  assert.ok(priors["internal-app"].accuracy > DEFAULT_PLAYBOOK.opportunityPriors["internal-app"].accuracy);
+  assert.ok(priors["internal-app"]["ux-ui"] < DEFAULT_PLAYBOOK.opportunityPriors["internal-app"]["ux-ui"]);
+});
+
+test("a candidate that ranks past winners higher is promoted with a readable diff", () => {
+  const champion = clonePlaybook();
+  champion.repoSelection.weights = { ...champion.repoSelection.weights, externalMergeRate: -1, popularity: 1 };
+  champion.opportunityPriors["internal-app"] = { ...champion.opportunityPriors["internal-app"], accuracy: 0.01, "ux-ui": 0.6 };
+  const result = evolve({ champion, samples: Array.from({ length: 30 }, (_, index) => sample(index)), nextVersion: 2 });
+  assert.equal(result.decision, "promoted");
+  assert.ok(result.metrics.candidateScore > result.metrics.championScore);
+  assert.ok(result.diff.some((change) => change.area === "挑仓库"));
+  assert.ok(result.diff.some((change) => change.area === "挑方向"));
+});
+
+test("lessons without real evidence are discarded", () => {
+  const lessons = applyReflection(clonePlaybook(), {
+    add: [
+      { kind: "pr", text: "有据可查", evidence: ["opp-1"] },
+      { kind: "pr", text: "凭空想象", evidence: ["opp-999"] },
+    ],
+    retire: ["seed-small-pr"],
+  }, [sample(1)], 2);
+  assert.ok(lessons.some((lesson) => lesson.text === "有据可查"));
+  assert.ok(!lessons.some((lesson) => lesson.text === "凭空想象"));
+  assert.ok(!lessons.some((lesson) => lesson.id === "seed-small-pr"));
+});
+
+test("challenger that wins online replaces the champion", () => {
+  const champion = { ...clonePlaybook(), version: 1 };
+  const challenger = { ...clonePlaybook(), version: 2 };
+  const samples = [
+    ...Array.from({ length: LIMITS.challengerMinSamples }, (_, index) => sample(index, { id: `c-${index}`, playbookVersion: 1, reward: 0 })),
+    ...Array.from({ length: LIMITS.challengerMinSamples }, (_, index) => sample(index, { id: `n-${index}`, playbookVersion: 2, reward: 1 })),
+  ];
+  assert.equal(evolve({ champion, challenger, samples, nextVersion: 3 }).decision, "challenger-promoted");
+  const early = evolve({ champion, challenger, samples: samples.slice(1), nextVersion: 3 });
+  assert.equal(early.decision, "challenger-testing");
+  assert.equal(early.candidate, undefined, "no new branches while an A/B test is running");
 });

@@ -3,795 +3,628 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Bug Hunter：一个通过测试策略、边界条件库和修复建议规则持续进化的入门级 RSI 项目设计。">
-  <meta name="theme-color" content="#132284">
-  <title>Bug Hunter — 自进化捉虫器项目设计</title>
+  <meta name="description" content="Bug Hunter：在 GitHub 仓库里找 Bug、找改进机会、动手修，并从 PR 结果里改写自己打法的自进化机器人。">
+  <meta name="theme-color" content="#0a1235">
+  <title>Bug Hunter — 自进化捉虫机器人</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23132284'/%3E%3Cpath d='M10 14h12v9H10zm3-5h6l2 5H11zM7 16h3m12 0h3M8 21h2m12 0h2M13 9l-2-3m8 3 2-3' fill='%23a8ff53' stroke='%23a8ff53' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
   <style>
     :root {
-      --ink: #0a1235;
-      --blue: #132284;
-      --cobalt: #2344e8;
-      --acid: #a8ff53;
-      --paper: #f3f0e8;
-      --white: #fffef9;
-      --orange: #ff765e;
-      --gold: #ffc857;
-      --muted: #60677b;
-      --line: #c7c9cc;
-      --shadow: 0 20px 60px rgba(10, 18, 53, .12);
-      --radius: 18px;
+      --ink: #0a1235; --blue: #132284; --cobalt: #2344e8; --acid: #a8ff53; --paper: #f3f0e8; --white: #fffef9;
+      --orange: #ff765e; --gold: #ffc857; --muted: #5a6178; --line: #c7c9cc; --panel: #101b52; --panel-line: #3d4b94;
+      --soft: #aeb8ea; --radius: 16px; --shadow: 0 20px 60px rgba(10, 18, 53, .12);
     }
-
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
-      margin: 0;
-      color: var(--ink);
-      background:
-        linear-gradient(rgba(10,18,53,.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(10,18,53,.035) 1px, transparent 1px),
-        var(--paper);
+      margin: 0; color: var(--ink); font-size: 16px; line-height: 1.65;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(rgba(10,18,53,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(10,18,53,.035) 1px, transparent 1px), var(--paper);
       background-size: 28px 28px;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      font-size: 16px;
-      line-height: 1.65;
     }
-
     a { color: inherit; }
-    button, a { -webkit-tap-highlight-color: transparent; }
     button { font: inherit; }
     img { display: block; max-width: 100%; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin: 0 0 12px;
-      color: var(--blue);
-      font: 700 .78rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-    }
-    .eyebrow::before { content: ""; width: 18px; height: 3px; background: var(--orange); }
-    .skip-link { position: fixed; left: 16px; top: -80px; z-index: 30; padding: 10px 14px; background: var(--acid); color: var(--ink); font-weight: 800; }
-    .skip-link:focus { top: 12px; }
-
-    .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      align-items: center;
-      gap: 24px;
-      min-height: 68px;
-      padding: 10px max(24px, calc((100vw - 1360px) / 2));
-      color: var(--white);
-      background: rgba(10, 18, 53, .96);
-      border-bottom: 1px solid rgba(255,255,255,.16);
-      backdrop-filter: blur(18px);
-    }
-    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 850; letter-spacing: -.02em; }
-    .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; color: var(--ink); background: var(--acid); border-radius: 9px; font-weight: 950; }
-    .topnav { display: flex; justify-content: center; gap: 22px; }
-    .topnav a { color: #dce5ff; text-decoration: none; font-size: .9rem; }
-    .topnav a:hover, .topnav a:focus-visible { color: var(--acid); }
-    .status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid rgba(168,255,83,.45); border-radius: 999px; font-size: .78rem; white-space: nowrap; }
-    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 0 5px rgba(168,255,83,.12); }
-    .status-short { display: none; }
-    .status-pill.is-waiting { border-color: rgba(255,200,87,.7); }
-    .status-pill.is-waiting .status-dot { background: var(--gold); box-shadow: 0 0 0 5px rgba(255,200,87,.12); }
-
-    main { width: min(1360px, calc(100% - 48px)); margin: 0 auto; }
-    section { scroll-margin-top: 92px; }
-    .hero {
-      min-height: calc(100vh - 68px);
-      display: grid;
-      grid-template-columns: minmax(0, .9fr) minmax(420px, 1.1fr);
-      align-items: center;
-      gap: clamp(36px, 6vw, 92px);
-      padding: 72px 0 56px;
-    }
     h1, h2, h3, p { margin-top: 0; }
-    h1 { max-width: 740px; margin-bottom: 22px; font-size: clamp(3rem, 6vw, 6.8rem); line-height: .92; letter-spacing: -.07em; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .skip-link { position: fixed; left: 16px; top: -80px; z-index: 30; padding: 10px 14px; background: var(--acid); font-weight: 800; }
+    .skip-link:focus { top: 12px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 12px; color: var(--blue); font: 700 .78rem/1.2 ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .eyebrow::before { content: ""; width: 18px; height: 3px; background: var(--orange); }
+
+    .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 20px; min-height: 64px; padding: 10px max(24px, calc((100vw - 1320px) / 2)); color: var(--white); background: rgba(10,18,53,.96); backdrop-filter: blur(16px); }
+    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 850; white-space: nowrap; }
+    .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; color: var(--ink); background: var(--acid); border-radius: 9px; font-weight: 950; }
+    .topnav { display: flex; gap: 18px; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
+    .topnav a { color: #dce5ff; text-decoration: none; font-size: .88rem; white-space: nowrap; }
+    .topnav a:hover, .topnav a:focus-visible { color: var(--acid); }
+    .status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 11px; border: 1px solid rgba(168,255,83,.45); border-radius: 999px; font-size: .76rem; white-space: nowrap; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acid); }
+    .status-pill.is-waiting .status-dot { background: var(--gold); }
+
+    main { width: min(1320px, calc(100% - 48px)); margin: 0 auto; }
+    section { scroll-margin-top: 84px; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 1fr); align-items: center; gap: clamp(32px, 5vw, 80px); padding: 72px 0 64px; }
+    h1 { margin-bottom: 22px; font-size: clamp(2.8rem, 5.6vw, 6rem); line-height: .95; letter-spacing: -.06em; }
     h1 span { color: var(--cobalt); }
-    .lede { max-width: 650px; margin-bottom: 28px; color: #343b54; font-size: clamp(1.05rem, 1.8vw, 1.28rem); line-height: 1.7; }
-    .principle {
-      max-width: 650px;
-      margin: 0 0 30px;
-      padding: 16px 18px 16px 20px;
-      background: var(--white);
-      border-left: 5px solid var(--acid);
-      box-shadow: 7px 7px 0 var(--ink);
-      font-weight: 750;
-    }
-    .hero-meta { display: flex; flex-wrap: wrap; gap: 9px; }
-    .tag { padding: 7px 11px; border: 1px solid var(--ink); border-radius: 999px; font-size: .8rem; font-weight: 750; background: rgba(255,255,255,.42); }
+    .lede { max-width: 640px; color: #343b54; font-size: clamp(1.02rem, 1.7vw, 1.22rem); }
+    .principle { max-width: 640px; margin: 24px 0; padding: 16px 18px; background: var(--white); border-left: 5px solid var(--acid); box-shadow: 7px 7px 0 var(--ink); font-weight: 750; }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tag { padding: 6px 11px; border: 1px solid var(--ink); border-radius: 999px; font-size: .8rem; font-weight: 750; background: rgba(255,255,255,.5); }
+    .hero-figure { position: relative; margin: 0; padding: 10px; background: var(--ink); border-radius: 24px; box-shadow: var(--shadow); }
+    .hero-figure img { width: 100%; aspect-ratio: 12 / 7.6; object-fit: cover; border-radius: 16px; }
+    .hero-figure figcaption { padding: 10px 8px 4px; color: #cfd7fb; font-size: .78rem; }
+    .live-card { position: absolute; right: -16px; bottom: 56px; width: 220px; padding: 16px; background: var(--acid); border: 3px solid var(--ink); box-shadow: 8px 8px 0 var(--orange); transform: rotate(-2deg); }
+    .live-card strong { display: block; font-size: 1.9rem; line-height: 1.05; }
+    .live-card span { font-size: .78rem; font-weight: 800; }
 
-    .hero-panel { position: relative; }
-    .hero-panel::before { content: "LIVE SPECIMEN"; position: absolute; top: -14px; left: 28px; z-index: 2; padding: 6px 10px; color: var(--white); background: var(--orange); font: 800 .72rem/1 ui-monospace, monospace; letter-spacing: .1em; transform: rotate(-2deg); }
-    .hero-panel figure { margin: 0; padding: 10px; color: var(--white); background: var(--ink); border-radius: 24px; box-shadow: var(--shadow); transform: rotate(1deg); }
-    .hero-panel img { width: 100%; aspect-ratio: 12 / 7.6; object-fit: cover; border-radius: 17px; }
-    .hero-panel figcaption { display: flex; justify-content: space-between; gap: 24px; padding: 12px 10px 5px; color: #cfd7fb; font-size: .78rem; }
-    .current-card { position: absolute; right: -22px; bottom: 72px; width: 210px; padding: 17px; color: var(--ink); background: var(--acid); border: 3px solid var(--ink); box-shadow: 8px 8px 0 var(--orange); transform: rotate(-2deg); }
-    .current-card strong { display: block; font-size: 2rem; line-height: 1; }
-    .current-card span { font-size: .78rem; font-weight: 800; }
+    .section-block { padding: 88px 0; border-top: 1px solid rgba(10,18,53,.2); }
+    .section-head { display: grid; grid-template-columns: .75fr 1.25fr; gap: 32px; align-items: end; margin-bottom: 40px; }
+    h2 { margin-bottom: 0; font-size: clamp(2.1rem, 4.2vw, 4.4rem); line-height: 1; letter-spacing: -.05em; }
+    .section-intro { max-width: 700px; margin: 0; color: var(--muted); font-size: 1.05rem; }
 
-    .section-block { padding: 104px 0; border-top: 1px solid rgba(10,18,53,.2); }
-    .section-head { display: grid; grid-template-columns: .7fr 1.3fr; gap: 32px; align-items: end; margin-bottom: 46px; }
-    h2 { margin-bottom: 0; font-size: clamp(2.35rem, 4.6vw, 5rem); line-height: .98; letter-spacing: -.055em; }
-    .section-intro { max-width: 690px; margin: 0; color: var(--muted); font-size: 1.08rem; }
+    .card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .card { padding: 22px; background: var(--white); border: 1px solid var(--ink); border-radius: var(--radius); }
+    .card h3 { margin-bottom: 8px; font-size: 1.1rem; }
+    .card p { margin: 0; color: var(--muted); font-size: .92rem; }
+    .card .key { display: inline-block; margin-bottom: 12px; padding: 3px 8px; color: var(--white); background: var(--blue); border-radius: 6px; font: 800 .74rem/1.4 ui-monospace, monospace; }
+    .contrast { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .contrast .card:last-child { color: var(--white); background: var(--cobalt); border-color: var(--cobalt); }
+    .contrast .card:last-child p { color: #e6eaff; }
 
-    .loop-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; counter-reset: loop; }
-    .loop-step { position: relative; min-height: 220px; padding: 22px 18px; background: var(--white); border: 1px solid var(--ink); counter-increment: loop; }
-    .loop-step::before { content: "0" counter(loop); display: block; margin-bottom: 34px; color: var(--cobalt); font: 900 1.4rem/1 ui-monospace, monospace; }
-    .loop-step:not(:last-child)::after { content: "→"; position: absolute; right: -17px; top: 24px; z-index: 2; display: grid; place-items: center; width: 32px; height: 32px; color: var(--white); background: var(--ink); border-radius: 50%; }
-    .loop-step h3 { margin-bottom: 8px; font-size: 1.02rem; }
-    .loop-step p { margin: 0; color: var(--muted); font-size: .88rem; line-height: 1.55; }
-    .loop-step.active { color: var(--white); background: var(--cobalt); transform: translateY(-8px); box-shadow: 7px 7px 0 var(--acid); }
-    .loop-step.active::before, .loop-step.active p { color: #e6eaff; }
-    .recursive-note { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; margin-top: 30px; padding: 22px; color: var(--white); background: var(--ink); border-radius: var(--radius); }
-    .recursive-icon { display: grid; place-items: center; width: 56px; height: 56px; color: var(--ink); background: var(--acid); border-radius: 50%; font-size: 1.8rem; font-weight: 900; }
-    .recursive-note p { margin: 0; color: #dae2ff; }
+    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; counter-reset: step; }
+    .step { position: relative; padding: 20px 18px; background: var(--white); border: 1px solid var(--ink); counter-increment: step; }
+    .step::before { content: "0" counter(step); display: block; margin-bottom: 18px; color: var(--cobalt); font: 900 1.25rem/1 ui-monospace, monospace; }
+    .step h3 { margin-bottom: 6px; font-size: 1rem; }
+    .step p { margin: 0; color: var(--muted); font-size: .86rem; line-height: 1.55; }
+    .step.hands { background: #eef0fb; }
+    .split-note { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; margin-top: 24px; padding: 20px; color: var(--white); background: var(--ink); border-radius: var(--radius); }
+    .split-note p { margin: 0; color: #dae2ff; }
+    .badge-icon { display: grid; place-items: center; width: 52px; height: 52px; color: var(--ink); background: var(--acid); border-radius: 50%; font-size: 1.6rem; font-weight: 900; }
 
-    .lab-board { padding: clamp(22px, 4vw, 44px); background: var(--ink); border-radius: 26px; box-shadow: var(--shadow); }
-    .lab-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 26px; color: var(--white); }
-    .lab-toolbar h3 { margin: 0; font-size: 1.25rem; }
-    .segmented { display: inline-flex; padding: 4px; background: #071027; border: 1px solid #43509a; border-radius: 12px; }
-    .segmented button { padding: 8px 13px; color: #cbd3fa; background: transparent; border: 0; border-radius: 8px; cursor: pointer; font-size: .82rem; }
-    .segmented button[aria-pressed="true"] { color: var(--ink); background: var(--acid); font-weight: 850; }
-    .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 12px; }
-    .metric { padding: 20px; color: var(--white); background: #101b52; border: 1px solid #3d4b94; border-radius: 14px; }
-    .metric-label { display: block; margin-bottom: 18px; color: #aeb8ea; font-size: .76rem; letter-spacing: .05em; }
-    .metric-value { display: block; font-size: clamp(1.8rem, 3vw, 3rem); line-height: 1; letter-spacing: -.04em; }
-    .metric-delta { display: block; margin-top: 9px; color: var(--acid); font-size: .75rem; }
-    .chart-grid { display: grid; grid-template-columns: 1.35fr .65fr; gap: 14px; margin-top: 14px; }
-    .chart-card { min-height: 330px; padding: 22px; color: var(--white); background: #101b52; border: 1px solid #3d4b94; border-radius: 14px; }
-    .chart-card h3 { margin-bottom: 6px; font-size: 1rem; }
-    .chart-card > p { color: #9fa9db; font-size: .78rem; }
-    .line-chart { width: 100%; height: 220px; overflow: visible; }
-    .line-chart text { fill: #9fa9db; font-size: 11px; font-family: ui-monospace, monospace; }
-    .run-bars { display: flex; align-items: end; gap: 10px; height: 210px; padding: 14px 6px 30px; border-bottom: 1px solid #344174; }
-    .run-bar { position: relative; flex: 1; min-width: 16px; max-width: 52px; background: linear-gradient(180deg, var(--acid), #3eaa79); border-radius: 6px 6px 0 0; }
-    .run-bar span { position: absolute; left: 50%; bottom: -25px; color: #aeb8ea; font: .65rem ui-monospace, monospace; transform: translateX(-50%); white-space: nowrap; }
-    .empty-chart { display: grid; place-items: center; height: 210px; color: #aeb8ea; border: 1px dashed #43509a; border-radius: 10px; text-align: center; }
-    .run-button { padding: 9px 13px; color: var(--ink); background: var(--acid); border: 0; border-radius: 9px; font-weight: 850; cursor: pointer; }
+    .dark-board { padding: clamp(20px, 3.5vw, 40px); color: var(--white); background: var(--ink); border-radius: 24px; box-shadow: var(--shadow); }
+    .board-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 22px; }
+    .board-toolbar h3 { margin: 0; font-size: 1.2rem; }
+    .panel { padding: 20px; background: var(--panel); border: 1px solid var(--panel-line); border-radius: 14px; }
+    .panel h3 { margin-bottom: 6px; font-size: 1rem; }
+    .panel > p { color: #9fa9db; font-size: .8rem; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .kpi { padding: 18px; background: var(--panel); border: 1px solid var(--panel-line); border-radius: 14px; }
+    .kpi span { display: block; margin-bottom: 14px; color: var(--soft); font-size: .76rem; }
+    .kpi strong { display: block; font-size: clamp(1.7rem, 2.8vw, 2.6rem); line-height: 1; letter-spacing: -.03em; }
+    .board-grid { display: grid; grid-template-columns: 1.3fr .7fr; gap: 14px; margin-top: 14px; }
+    .bars { display: flex; align-items: end; gap: 8px; height: 190px; padding: 12px 4px 28px; border-bottom: 1px solid #344174; }
+    .board-grid > *, .tree-wrap > *, .arch-grid > *, .hero > * { min-width: 0; }
+    .bar { position: relative; flex: 1; min-width: 3px; max-width: 44px; border-radius: 6px 6px 0 0; background: linear-gradient(180deg, var(--acid), #3eaa79); }
+    .bar.negative { background: linear-gradient(180deg, #ff9d8b, var(--orange)); }
+    .bar small { position: absolute; left: 50%; bottom: -24px; color: var(--soft); font: .64rem ui-monospace, monospace; transform: translateX(-50%); white-space: nowrap; }
+    .empty { display: grid; place-items: center; min-height: 150px; padding: 18px; color: var(--soft); border: 1px dashed #43509a; border-radius: 10px; text-align: center; font-size: .88rem; }
+    .light .empty { color: var(--muted); border-color: var(--line); background: var(--white); }
+    .cap-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; font-size: .86rem; }
+    .cap-list li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; background: #0b153f; border: 1px solid #344174; border-radius: 9px; }
+    .cap-on { color: var(--acid); font-weight: 800; }
+    .cap-off { color: var(--gold); font-weight: 800; }
+    .run-button { padding: 9px 14px; color: var(--ink); background: var(--acid); border: 0; border-radius: 9px; font-weight: 850; cursor: pointer; }
     .run-button:disabled { opacity: .6; cursor: wait; }
-    .heatmap { display: grid; grid-template-columns: repeat(8, 1fr); gap: 7px; margin-top: 25px; }
-    .heat-cell { aspect-ratio: 1; border-radius: 4px; background: #253165; }
-    .heat-cell[data-level="1"] { background: #3d5e77; }
-    .heat-cell[data-level="2"] { background: #72a85f; }
-    .heat-cell[data-level="3"] { background: var(--acid); }
-    .legend { display: flex; gap: 12px; margin-top: 18px; color: #9fa9db; font-size: .72rem; }
-    .evolution-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
-    .operator-row { display: grid; grid-template-columns: 92px 1fr 42px; align-items: center; gap: 10px; margin: 16px 0; color: #e2e7ff; font-size: .82rem; }
-    .operator-track { height: 10px; overflow: hidden; background: #263165; border-radius: 999px; }
-    .operator-fill { height: 100%; background: var(--acid); border-radius: inherit; }
-    .generation-list, .candidate-list { display: grid; gap: 10px; }
-    .generation-item, .candidate-item { padding: 14px; color: #e2e7ff; background: #0b153f; border: 1px solid #344174; border-radius: 10px; }
-    .generation-item strong, .candidate-item strong { display: block; margin-bottom: 5px; color: var(--white); }
-    .generation-item p, .candidate-item p { margin: 5px 0 0; color: #aeb8ea; font-size: .78rem; }
-    .benchmark-note { margin-top: 14px; padding: 14px 16px; color: #fff2cc; background: #342b22; border: 1px solid #886634; border-radius: 10px; font-size: .82rem; }
+    .run-status { color: var(--soft); font-size: .82rem; }
 
-    .specimen-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-    .specimen { position: relative; overflow: hidden; background: var(--white); border: 1px solid var(--ink); border-radius: var(--radius); box-shadow: 6px 6px 0 rgba(10,18,53,.12); }
-    .specimen-top { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border-bottom: 1px dashed var(--line); }
-    .specimen-id { font: 850 .76rem/1 ui-monospace, monospace; letter-spacing: .08em; }
-    .severity { padding: 5px 8px; border-radius: 999px; font: 800 .68rem/1 ui-monospace, monospace; }
-    .severity.high { color: #721b2b; background: #ffd8d1; }
-    .severity.medium { color: #6b4500; background: #fff0bc; }
-    .specimen-body { padding: 24px 18px; }
-    .specimen-symbol { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 18px; color: var(--white); background: var(--blue); border-radius: 50% 42% 48% 38%; font: 900 1.4rem/1 ui-monospace, monospace; transform: rotate(-7deg); }
-    .specimen h3 { margin-bottom: 8px; font-size: 1.15rem; }
-    .specimen p { color: var(--muted); font-size: .9rem; }
-    .specimen dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 12px; margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--line); font-size: .78rem; }
-    .specimen dt { color: var(--muted); }
-    .specimen dd { margin: 0; font-weight: 700; }
-    .detail-toggle { width: 100%; padding: 12px 18px; color: var(--white); background: var(--ink); border: 0; text-align: left; cursor: pointer; font-weight: 750; }
-    .detail-toggle::after { content: "+"; float: right; font-size: 1.2rem; }
-    .detail-toggle[aria-expanded="true"]::after { content: "−"; }
-    .specimen-detail { padding: 0 18px; max-height: 0; overflow: hidden; background: #eef0fb; transition: max-height .25s ease, padding .25s ease; }
-    .specimen-detail.open { max-height: 180px; padding: 16px 18px; }
-    .specimen-detail code { color: #b22945; font-size: .78rem; white-space: normal; }
+    .tree-wrap { display: grid; grid-template-columns: 1.4fr .6fr; gap: 14px; }
+    .tree-canvas { min-height: 420px; overflow-x: auto; }
+    .tree-canvas svg { display: block; width: 100%; min-width: 420px; height: auto; }
+    .tree-node { cursor: pointer; }
+    .tree-node:focus { outline: none; }
+    .tree-node:focus-visible circle, .tree-node.selected circle { stroke: var(--white); stroke-width: 4; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; color: var(--soft); font-size: .76rem; }
+    .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; vertical-align: -1px; }
+    .detail-list { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; font-size: .82rem; }
+    .detail-list li { padding: 9px 11px; background: #0b153f; border: 1px solid #344174; border-radius: 8px; }
+    .detail-list b { color: var(--acid); font-weight: 700; }
+
+    .weights { display: grid; gap: 12px; }
+    .weight-row { display: grid; grid-template-columns: 150px 1fr 52px; align-items: center; gap: 10px; font-size: .82rem; }
+    .weight-track { position: relative; height: 10px; background: #263165; border-radius: 999px; }
+    .weight-track::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: #6d7fe3; }
+    .weight-fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: var(--acid); }
+    .weight-fill.negative { background: var(--orange); }
+    .heat { width: 100%; border-collapse: separate; border-spacing: 4px; font-size: .74rem; }
+    .heat th { color: var(--soft); font-weight: 600; text-align: left; }
+    .heat td { padding: 8px 4px; border-radius: 5px; text-align: center; font-family: ui-monospace, monospace; color: var(--ink); }
+    .lessons { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+    .lessons li { padding: 12px 14px; background: #0b153f; border: 1px solid #344174; border-radius: 10px; font-size: .86rem; }
+    .lessons small { display: block; margin-top: 4px; color: var(--soft); }
+
+    .specimen-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .specimen { display: flex; flex-direction: column; background: var(--white); border: 1px solid var(--ink); border-radius: var(--radius); box-shadow: 6px 6px 0 rgba(10,18,53,.12); overflow: hidden; }
+    .specimen-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px dashed var(--line); font: 800 .72rem/1.3 ui-monospace, monospace; }
+    .specimen-body { flex: 1; padding: 18px 16px; }
+    .specimen h3 { margin-bottom: 8px; font-size: 1.05rem; }
+    .specimen p { color: var(--muted); font-size: .88rem; }
+    .specimen ul { margin: 10px 0 0; padding-left: 18px; font-size: .8rem; }
+    .chip { display: inline-block; padding: 3px 8px; border-radius: 999px; font: 800 .68rem/1.4 ui-monospace, monospace; background: #e7eaf8; }
+    .chip.good { background: var(--acid); }
+    .chip.warn { background: #fff0bc; color: #6b4500; }
+    .chip.bad { background: #ffd8d1; color: #721b2b; }
+    .vote { display: flex; gap: 8px; padding: 12px 16px; background: #eef0fb; }
+    .vote button { flex: 1; padding: 8px; background: var(--white); border: 1px solid var(--ink); border-radius: 8px; cursor: pointer; font-size: .82rem; }
+    .vote button[aria-pressed="true"] { background: var(--acid); font-weight: 800; }
 
     .table-wrap { overflow-x: auto; background: var(--white); border: 1px solid var(--ink); border-radius: var(--radius); }
-    table { width: 100%; border-collapse: collapse; min-width: 840px; }
-    caption { padding: 18px 20px; color: var(--muted); text-align: left; font-size: .82rem; }
-    th, td { padding: 17px 18px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
-    th { color: var(--white); background: var(--ink); border-top: 0; font-size: .78rem; letter-spacing: .04em; }
-    td { font-size: .88rem; }
-    tbody tr:hover { background: #f5f7ff; }
-    .decision { display: inline-flex; padding: 5px 9px; border-radius: 999px; font: 800 .7rem/1 ui-monospace, monospace; }
-    .decision.promote { background: var(--acid); }
-    .decision.reject { color: #6f2330; background: #ffd8d1; }
-    .history-note { margin-top: 18px; color: var(--muted); font-size: .86rem; }
+    table.data { width: 100%; min-width: 820px; border-collapse: collapse; }
+    table.data caption { padding: 16px 18px; color: var(--muted); text-align: left; font-size: .82rem; }
+    table.data th, table.data td { padding: 13px 16px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; font-size: .86rem; }
+    table.data th { color: var(--white); background: var(--ink); border-top: 0; font-size: .76rem; letter-spacing: .04em; }
+    table.data td.num { font-family: ui-monospace, monospace; }
+    .table-gap { margin-top: 20px; }
 
-    .architecture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
-    .stack-map { display: grid; gap: 10px; padding: 28px; background: var(--blue); border-radius: var(--radius); }
-    .stack-node { position: relative; padding: 18px 20px; color: var(--white); background: rgba(7,16,39,.68); border: 1px solid #6d7fe3; border-radius: 12px; }
-    .stack-node + .stack-node::before { content: "↓"; position: absolute; top: -24px; left: 50%; z-index: 2; width: 26px; height: 26px; color: var(--ink); background: var(--acid); border-radius: 50%; text-align: center; line-height: 24px; transform: translateX(-50%); }
-    .stack-node strong { display: block; color: var(--acid); }
-    .stack-node span { color: #cbd3fa; font-size: .82rem; }
-    .design-doc { padding: 28px; background: var(--white); border: 1px solid var(--ink); border-radius: var(--radius); }
-    .design-doc h3 { font-size: 1.4rem; }
-    .design-doc ul { padding-left: 20px; }
-    .design-doc li { margin-bottom: 13px; }
-    .doc-update { margin-top: 22px; padding: 16px; background: var(--paper); border-left: 4px solid var(--orange); font-size: .87rem; }
-
-    .roadmap-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 24px; }
-    .roadmap-list { display: grid; gap: 0; }
-    .phase { display: grid; grid-template-columns: 100px 1fr; gap: 22px; padding: 26px 0; border-top: 1px solid var(--line); }
-    .phase:first-child { border-top: 2px solid var(--ink); }
-    .phase-code { color: var(--cobalt); font: 900 .82rem/1.5 ui-monospace, monospace; }
-    .phase h3 { margin-bottom: 6px; }
-    .phase p { margin: 0; color: var(--muted); font-size: .9rem; }
-    .guardrails { padding: 28px; color: var(--white); background: var(--ink); border-radius: var(--radius); align-self: start; }
-    .guardrails h3 { color: var(--acid); }
-    .guardrails ul { margin: 0; padding: 0; list-style: none; }
-    .guardrails li { position: relative; padding: 14px 0 14px 28px; border-top: 1px solid #344174; color: #dbe2ff; font-size: .88rem; }
-    .guardrails li::before { content: "✓"; position: absolute; left: 0; color: var(--acid); font-weight: 900; }
-
-    footer { margin-top: 64px; padding: 34px max(24px, calc((100vw - 1360px) / 2)); color: #cbd3fa; background: var(--ink); }
-    .footer-inner { display: flex; justify-content: space-between; gap: 24px; }
-    footer p { margin: 0; font-size: .82rem; }
-
-    :focus-visible { outline: 3px solid var(--orange); outline-offset: 4px; }
+    .arch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .stack { display: grid; gap: 10px; padding: 24px; background: var(--blue); border-radius: var(--radius); }
+    .stack div { padding: 14px 16px; color: var(--white); background: rgba(7,16,39,.68); border: 1px solid #6d7fe3; border-radius: 12px; font-size: .86rem; }
+    .stack strong { display: block; color: var(--acid); }
+    .card pre { margin: 12px 0 0; padding: 12px; overflow-x: auto; color: #e2e7ff; background: var(--ink); border-radius: 10px; font-size: .78rem; line-height: 1.5; }
+    footer { padding: 40px 0 56px; color: var(--muted); border-top: 1px solid rgba(10,18,53,.2); font-size: .84rem; }
 
     @media (max-width: 1080px) {
-      .topnav { display: none; }
-      .topbar { grid-template-columns: 1fr auto; }
-      .hero { grid-template-columns: 1fr; min-height: auto; }
-      .hero-copy { max-width: 820px; }
-      .hero-panel { max-width: 820px; }
-      .loop-grid { grid-template-columns: repeat(3, 1fr); }
-      .loop-step:nth-child(3)::after { display: none; }
-      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
-      .specimen-grid { grid-template-columns: 1fr; }
+      .hero, .section-head, .board-grid, .tree-wrap, .arch-grid, .contrast { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: repeat(2, 1fr); }
+      .card-grid, .specimen-grid { grid-template-columns: 1fr 1fr; }
+      .live-card { right: 12px; }
     }
-
-    @media (max-width: 760px) {
-      main { width: min(100% - 28px, 1360px); }
-      .topbar { padding-inline: 14px; }
-      .status-long { display: none; }
-      .status-short { display: inline; font-size: .72rem; }
-      .hero { padding-top: 48px; gap: 42px; }
-      h1 { font-size: clamp(3.1rem, 16vw, 5.2rem); }
-      .current-card { right: 8px; bottom: 64px; width: 170px; }
-      .section-block { padding: 74px 0; }
-      .section-head { grid-template-columns: 1fr; gap: 18px; }
-      .loop-grid { grid-template-columns: 1fr; }
-      .loop-step { min-height: 0; }
-      .loop-step:not(:last-child)::after { content: "↓"; display: grid; top: auto; right: 18px; bottom: -18px; }
-      .loop-step.active { transform: none; }
-      .lab-toolbar { align-items: flex-start; flex-direction: column; }
-      .metrics-grid, .chart-grid, .architecture-grid, .roadmap-grid { grid-template-columns: 1fr; }
-      .metric-value { font-size: 2.2rem; }
-      .phase { grid-template-columns: 70px 1fr; }
-      .footer-inner { flex-direction: column; }
+    @media (max-width: 640px) {
+      main { width: calc(100% - 32px); }
+      .topbar { padding: 10px 16px; }
+      .topnav, .status-pill span:last-child { display: none; }
+      .steps, .card-grid, .specimen-grid { grid-template-columns: 1fr; }
+      .hero { padding-top: 40px; }
+      .live-card { position: static; width: auto; margin-top: 12px; transform: none; }
+      .weight-row { grid-template-columns: 110px 1fr 44px; }
     }
-
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
-    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
   </style>
 </head>
 <body>
-  <a class="skip-link" href="#overview">跳到主要内容</a>
+  <a class="skip-link" href="#main">跳到正文</a>
   <header class="topbar">
-    <a class="brand" href="#overview" aria-label="Bug Hunter 首页">
-      <span class="brand-mark" aria-hidden="true">B</span>
-      <span>Bug Hunter</span>
-    </a>
-    <nav class="topnav" aria-label="项目设计导航">
-      <a href="#evolution-loop">进化循环</a>
-      <a href="#metrics">测试覆盖图</a>
-      <a href="#specimens">Bug 标本馆</a>
-      <a href="#architecture">系统架构</a>
-      <a href="#roadmap">路线图</a>
+    <a class="brand" href="#overview"><span class="brand-mark">B</span>Bug Hunter</a>
+    <nav class="topnav" aria-label="页面导航">
+      <a href="#overview">概览</a><a href="#pipeline">流水线</a><a href="#evolution-loop">自进化</a><a href="#tree">进化树</a>
+      <a href="#metrics">看板</a><a href="#playbook">当前打法</a><a href="#specimens">标本馆</a><a href="#coverage">覆盖</a><a href="#history">历史</a><a href="#architecture">架构</a>
     </nav>
-    <div class="status-pill is-waiting" id="runtime-pill"><span class="status-dot" aria-hidden="true"></span><span class="status-long" id="runtime-status">连接项目状态…</span><span class="status-short" id="runtime-short">准备中</span></div>
+    <span class="status-pill is-waiting" id="status-pill"><span class="status-dot"></span><span id="status-text">读取中…</span></span>
   </header>
 
-  <main>
-    <section class="hero" id="overview" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow">Project design / RSI starter</p>
-        <h1 id="hero-title">让测试系统学会<span>更聪明地找错</span></h1>
-        <p class="lede">Bug Hunter 是一个递归自我改进（RSI）入门项目：每天改进测试策略，同时探测当前部署服务的真实 API。实际请求、复测证据、Bug 修复事件和策略记录都保存在 D1；合成基准单独标注。</p>
-        <p class="principle">每天不是重复运行，而是改变下一次如何寻找缺陷。上一代的算子收益会改变下一代的搜索预算；只有训练分严格提升、保留集不退步且回归 100% 通过，候选才能晋级。</p>
-        <div class="hero-meta" aria-label="项目技术标签">
-          <span class="tag">Cloudflare Worker</span>
-          <span class="tag">Cron Trigger</span>
-          <span class="tag">D1 Evolution Log</span>
-          <span class="tag">HTML5 Living Spec</span>
-        </div>
+  <main id="main">
+    <section class="hero" id="overview">
+      <div>
+        <p class="eyebrow">AI 自进化项目 · Bug Hunter</p>
+        <h1>会从 PR 结果里<span>改写打法</span>的捉虫机器人</h1>
+        <p class="lede">Bug Hunter 每天在 GitHub 仓库里找 Bug 和改进机会：读代码、Issue 和测试，判断项目最需要什么，核对证据，动手修改并跑测试，产出待审核的补丁或 PR。每一次合并、关闭、团队投票都会被折算成奖励，用来改写它下一次挑仓库、挑方向、找 Bug 和写 PR 的方式。</p>
+        <p class="principle">自动化让它每天都跑；自进化让它每天跑得不一样——而且每次改变都要拿真实结果证明更好。</p>
+        <div class="tags"><span class="tag">开源仓库</span><span class="tag">团队内部工具</span><span class="tag">真实 GitHub 数据</span><span class="tag">Playbook 进化树</span><span class="tag">Cloudflare Worker + D1</span></div>
       </div>
-      <div class="hero-panel">
-        <figure>
-          <img src="assets/bug-hunter-lab.svg" alt="扫描代码样本并将异常分支封装成 Bug 标本的数字取证实验室插图">
-          <figcaption><span>样本：checkout.applyCoupon()</span><span class="mono">SCAN / 07-19</span></figcaption>
-        </figure>
-        <div class="current-card"><strong id="hero-run-count">—</strong><span id="hero-run-label">当前进化代数</span></div>
+      <figure class="hero-figure">
+        <img src="assets/bug-hunter-lab.svg" alt="扫描光穿过代码样本，定位异常并封装为带编号的标本的插画" width="1200" height="760">
+        <figcaption>插画：从代码里取出可复现的“标本”。下方数字全部来自线上数据库。</figcaption>
+        <div class="live-card" aria-live="polite"><span>当前冠军打法</span><strong id="live-version">v1</strong><span id="live-evidence">已结算结果 0 个</span></div>
+      </figure>
+    </section>
+
+    <section class="section-block" aria-labelledby="goals-title">
+      <div class="section-head">
+        <div><p class="eyebrow">目标与赛道</p><h2 id="goals-title">为谁变得更好？</h2></div>
+        <p class="section-intro">目标决定“什么算好结果”。三个目标按权重同时进化；项目类型只是初始猜测，不是写死的规则。</p>
+      </div>
+      <div class="card-grid">
+        <article class="card"><span class="key">contributor</span><h3>拿到更多被合并的贡献</h3><p>学习什么样的仓库维护者更愿意回复和合并外部 PR，什么样的 PR（小 Bug、小功能）更容易进。</p></article>
+        <article class="card"><span class="key">craft</span><h3>提高修 Bug 的能力</h3><p>总结哪里最容易出 Bug、什么 Bug 该怎么修、诊断为什么会被推翻，把经验喂回下一次诊断和修复。</p></article>
+        <article class="card"><span class="key">internal</span><h3>让内部工具更好用</h3><p>团队工具多是 AI 辅助写出来的：更需要准确、快速、轻便和代码瘦身，而不是无限加功能。团队投票就是奖励。</p></article>
+      </div>
+      <div class="contrast">
+        <article class="card"><h3>自动化（每天照常跑）</h3><p>选仓库 → 侦察 → AI 诊断 → 证据核对 → 修复并测试 → 待审核 PR → 记录。连续 30 天做同样的事，只是数据变多。</p></article>
+        <article class="card"><h3>自进化（每天跑得不一样）</h3><p>第 30 天挑的仓库、选的方向、写 PR 的方式都和第 1 天不同，并且能指着真实结果说明为什么改、改完好了多少。</p></article>
       </div>
     </section>
 
-    <section class="section-block" id="evolution-loop" aria-labelledby="loop-title">
+    <section class="section-block" id="pipeline" aria-labelledby="pipeline-title">
       <div class="section-head">
-        <div><p class="eyebrow">01 / Evolution loop</p><h2 id="loop-title">一次真正的日进化</h2></div>
-        <p class="section-intro">Cron 每天只负责唤醒系统。真正的进化来自“发现薄弱点—产生不同候选策略—用基准集竞争—只晋级更优版本—反过来改写明天的搜索方法”。</p>
+        <div><p class="eyebrow">自动化层</p><h2 id="pipeline-title">每日狩猎流水线</h2></div>
+        <p class="section-intro">Cron 每 20 分钟推进一步，每天完成一轮。白色步骤在 Cloudflare 上完成；浅紫色步骤由执行器完成，因为 Worker 不能克隆仓库、不能跑测试。</p>
       </div>
-      <div class="loop-grid">
-        <article class="loop-step"><h3>观察缺口</h3><p>读取昨日漏测分支、变异测试幸存者与失败标本。</p></article>
-        <article class="loop-step"><h3>提出假设</h3><p>选择最值得攻克的缺陷族，而不是随机扩大测试量。</p></article>
-        <article class="loop-step active"><h3>变异策略</h3><p>生成 5 个候选测试基因：输入、序列、断言与超时策略。</p></article>
-        <article class="loop-step"><h3>沙箱竞赛</h3><p>在隔离样本中比较新缺陷、覆盖率、误报与执行成本。</p></article>
-        <article class="loop-step"><h3>守门晋级</h3><p>候选必须提高综合分，且不能破坏既有回归测试。</p></article>
-        <article class="loop-step"><h3>更新设计书</h3><p>保存胜负原因，并改写网页中的现状、瓶颈与下一目标。</p></article>
+      <div class="steps">
+        <article class="step"><h3>挑仓库</h3><p>内部仓库全看；开源仓库按冠军打法打分，少量名额留给挑战者和随机探索。</p></article>
+        <article class="step"><h3>侦察</h3><p>读取元数据、README、根目录、开放 Issue、最近关闭的 PR，算出仓库画像和特征。</p></article>
+        <article class="step"><h3>AI 诊断</h3><p>结合打法里的类型偏好和经验，判断项目痛点，给出 ≤3 个带证据的机会；无密钥时按 Issue 标签回退。</p></article>
+        <article class="step"><h3>证据核对</h3><p>文件是否存在、Issue 是否开放、是否已被认领或已有 PR。模型的话不算证据。</p></article>
+        <article class="step hands"><h3>复现与修改</h3><p>执行器领任务、克隆、跑基线测试，按经验生成最小改动。</p></article>
+        <article class="step hands"><h3>测试</h3><p>跑仓库自己的测试；失败带日志重试一次，仍失败就记录原因。</p></article>
+        <article class="step hands"><h3>待审核</h3><p>补丁和 PR 描述存档；人工审核后才提交，只读仓库永不提交。</p></article>
+        <article class="step"><h3>收集反馈</h3><p>轮询 PR 合并/关闭/无人理睬，接收团队投票，折算奖励，触发进化。</p></article>
       </div>
-      <div class="recursive-note">
-        <div class="recursive-icon" aria-hidden="true">↻</div>
-        <p><strong>递归发生在第二层：</strong>系统不仅改测试策略，还根据过去七代的成功率，重新分配“边界扩张、状态序列、并发扰动、输入缩减”四类变异算子的权重。它在学习如何更有效地改进自己。</p>
+      <div class="split-note"><div class="badge-icon" aria-hidden="true">⇄</div><p><strong>大脑与双手：</strong>Worker + D1 负责决策和记账；执行器（本地、GitHub Actions 或 Agent）通过 <code>/api/queue</code> 领任务、通过 <code>/api/attempts</code> 回传补丁和测试日志。</p></div>
+    </section>
+
+    <section class="section-block" id="evolution-loop" aria-labelledby="evolution-title">
+      <div class="section-head">
+        <div><p class="eyebrow">自进化层</p><h2 id="evolution-title">打法手册如何长出新枝</h2></div>
+        <p class="section-intro">每个机会在决策时都拍下快照：仓库特征、画像、类型、所用打法版本。结果回来后折算奖励，统计学习和 AI 反思一起生成候选打法，再用历史证据比较新旧。</p>
+      </div>
+      <div class="table-wrap">
+        <table class="data">
+          <caption>四个进化维度：每一个都是可调整的偏好，而不是固定规则。</caption>
+          <thead><tr><th>维度</th><th>要回答的问题</th><th>打法里可调的部分</th><th>学习信号</th></tr></thead>
+          <tbody>
+            <tr><td>E1 挑仓库</td><td>哪些仓库的维护者更愿意回复、合并外部 PR？</td><td>仓库特征权重、发现仓库的搜索式</td><td>PR 合并 / 关闭 / 超时无人理睬</td></tr>
+            <tr><td>E2 挑方向</td><td>什么类型的项目最需要哪类改动？</td><td>项目画像 × 机会类型偏好（Bug、准确、速度、瘦身、UI、小功能、竞品缺口）</td><td>验证通过率、修复成功率、接受率</td></tr>
+            <tr><td>E3 找和修</td><td>哪里容易出 Bug？什么 Bug 怎么修？</td><td>找 Bug 经验（带证据编号），注入诊断和执行器提示词</td><td>测试通过 / 失败、诊断被推翻</td></tr>
+            <tr><td>E4 写 PR</td><td>怎样的 PR 更容易被合并？</td><td>写 PR 经验、改动行数上限、是否先开 Issue</td><td>合并、关闭、维护者评论</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="steps table-gap">
+        <article class="step"><h3>结算奖励</h3><p>按目标组合折算：合并 +1、关闭 −0.5、团队说有用 +1（内部）……没结果的不参与学习。</p></article>
+        <article class="step"><h3>生成候选</h3><p>特征权重做带锚点的回归，类型偏好做贝叶斯更新；AI 反思提出经验，必须引用真实结果编号。</p></article>
+        <article class="step"><h3>离线回放</h3><p>训练集拟合、保留集评估：“如果当初用新打法排序，排在前面的机会奖励更高吗？”</p></article>
+        <article class="step"><h3>晋级或 A/B</h3><p>明显更好就晋级；分不出高下就当挑战者，拿 30% 名额线上对比；更差就淘汰，但保留在树上。</p></article>
+      </div>
+    </section>
+
+    <section class="section-block" id="tree" aria-labelledby="tree-title">
+      <div class="section-head">
+        <div><p class="eyebrow">第 3 阶段看这里</p><h2 id="tree-title">Playbook 进化树</h2></div>
+        <p class="section-intro">每个节点是一版打法，树根在下方。点选节点查看它改了什么、依据多少结果、为何晋级或被淘汰。没有真实结果时树不会长——这是设计，不是故障。</p>
+      </div>
+      <div class="dark-board tree-wrap">
+        <div class="panel tree-canvas">
+          <div id="playbook-tree" role="group" aria-label="Playbook 版本树"></div>
+          <div class="legend"><span><i style="background:#a8ff53"></i>冠军</span><span><i style="background:#ffc857"></i>挑战者</span><span><i style="background:#6d7fe3"></i>退役</span><span><i style="background:#ff765e"></i>淘汰</span></div>
+        </div>
+        <div class="panel" aria-live="polite">
+          <h3 id="node-title">v1</h3>
+          <p id="node-reason">读取中…</p>
+          <ul class="detail-list" id="node-diff"></ul>
+        </div>
       </div>
     </section>
 
     <section class="section-block" id="metrics" aria-labelledby="metrics-title">
       <div class="section-head">
-        <div><p class="eyebrow">02 / Evidence board</p><h2 id="metrics-title">测试覆盖图</h2></div>
-        <p class="section-intro">五个候选策略在固定上限的合成基准中比较；图表展示策略权重、保留集得分与回归门槛。覆盖数据明确标为模拟指标，不冒充真实仓库代码覆盖率。</p>
+        <div><p class="eyebrow">真实数据</p><h2 id="metrics-title">狩猎看板</h2></div>
+        <p class="section-intro">所有数字来自 <code>/api/state</code>，页面每分钟刷新。没有配置仓库或密钥时，这里会如实显示为零。</p>
       </div>
-      <div class="lab-board">
-        <div class="lab-toolbar">
-          <div><span class="eyebrow" style="color:#a8ff53">Live RSI state</span><h3 id="range-title">正在读取进化状态</h3></div>
-          <button class="run-button" type="button" id="run-sample">运行一轮进化</button>
+      <div class="dark-board">
+        <div class="board-toolbar">
+          <h3>累计</h3>
+          <div><button class="run-button" id="tick-button" type="button">手动推进一步</button> <span class="run-status" id="run-status" aria-live="polite"></span></div>
         </div>
-        <div class="metrics-grid" aria-live="polite">
-          <article class="metric"><span class="metric-label">GENERATION</span><strong class="metric-value" data-metric="generation">—</strong><span class="metric-delta" data-delta="generation">等待首次进化</span></article>
-          <article class="metric"><span class="metric-label">KNOWN SPECIMENS</span><strong class="metric-value" data-metric="findings">—</strong><span class="metric-delta" data-delta="findings">合成缺陷与教学样例</span></article>
-          <article class="metric"><span class="metric-label">SIMULATED COVERAGE</span><strong class="metric-value" data-metric="coverage">—</strong><span class="metric-delta" data-delta="coverage">合成基准分支 / 总分支</span></article>
-          <article class="metric"><span class="metric-label">TRAINING SCORE</span><strong class="metric-value" data-metric="score">—</strong><span class="metric-delta" data-delta="score">合成基准得分</span></article>
-          <article class="metric"><span class="metric-label">HOLDOUT SCORE</span><strong class="metric-value" data-metric="holdout">—</strong><span class="metric-delta" data-delta="holdout">独立保留集</span></article>
-          <article class="metric"><span class="metric-label">REGRESSION GATE</span><strong class="metric-value" data-metric="regression">—</strong><span class="metric-delta" data-delta="regression">100% 回归通过才允许晋级</span></article>
-          <article class="metric"><span class="metric-label">TEST LIBRARY</span><strong class="metric-value" data-metric="test-cases">—</strong><span class="metric-delta" data-delta="test-cases">稳定签名去重</span></article>
-        </div>
-        <p class="benchmark-note"><strong>合成基准说明：</strong>当前策略在封闭的购物结算缺陷模型上比较，得分是搜索效率代理指标，不是对真实仓库的测试结果。RSI 只更新测试策略与项目设计数据，不修改或部署自身代码。</p>
-        <div class="evolution-grid">
-          <article class="chart-card"><h3>当前搜索算子权重</h3><p>上一代的发现收益会反馈到下一代预算分配。</p><div id="operator-weights" aria-live="polite">正在加载策略…</div></article>
-          <article class="chart-card"><h3>候选策略评估</h3><p>显示最近一代候选得分、保留集和淘汰理由。</p><div class="candidate-list" id="candidate-history" aria-live="polite">等待首次候选评估</div></article>
-        </div>
-        <div class="chart-grid">
-          <article class="chart-card">
-            <h3>最近运行记录</h3><p>柱高表示回归检查通过率；策略进步看训练 / 保留集得分和晋级决策。</p>
-            <div class="empty-chart" id="run-chart" aria-live="polite">首次运行后显示历史记录</div>
-          </article>
-          <article class="chart-card">
-            <h3>缺陷类别分布</h3><p>统计合成基准与教学样例的分类。此处不等同于真实仓库代码覆盖率。</p>
-            <div class="heatmap" id="sample-categories" aria-label="内置样本缺陷分类"></div>
-            <div class="legend" id="category-legend">等待项目状态数据</div>
-          </article>
+        <div class="kpis" id="kpis"></div>
+        <div class="board-grid">
+          <div class="panel"><h3>每轮平均奖励</h3><p>按机会产生的那一轮聚合；绿色为正，橙色为负。</p><div id="reward-trend"></div></div>
+          <div class="panel"><h3>接线状态</h3><p>缺哪一项，流水线就在哪一步退化。</p><ul class="cap-list" id="capabilities"></ul></div>
         </div>
       </div>
     </section>
 
-    <section class="section-block" id="live-hunt" aria-labelledby="live-hunt-title">
+    <section class="section-block" id="playbook" aria-labelledby="playbook-title">
       <div class="section-head">
-        <div><p class="eyebrow">03 / Real API loop</p><h2 id="live-hunt-title">真实 API 捉虫闭环</h2></div>
-        <p class="section-intro">对当前部署的 Bug Hunter API 发起只读契约探测。保存请求、预期和实际响应；重复失败合并为同一 Bug，下一轮根据发现调整探测方向。</p>
+        <div><p class="eyebrow">冠军打法</p><h2 id="playbook-title">它现在怎么想</h2></div>
+        <p class="section-intro" id="goal-mix">目标组合读取中…</p>
       </div>
-      <div class="lab-board">
-        <div class="lab-toolbar">
-          <div><span class="eyebrow" style="color:#a8ff53">LIVE TARGET</span><h3 id="live-hunt-status">等待第一次真实探测</h3></div>
-          <button class="run-button" type="button" id="run-live-hunt">运行真实 API 捉虫</button>
+      <div class="dark-board">
+        <div class="board-grid">
+          <div class="panel"><h3>E1 挑仓库：特征权重</h3><p>右侧为加分，左侧为减分。</p><div class="weights" id="weights"></div></div>
+          <div class="panel"><h3>E3 / E4 经验</h3><p>带证据数的条目才是学到的；seed 条目来自 Tony 的 skill。</p><ul class="lessons" id="lessons"></ul></div>
         </div>
-        <div class="metrics-grid" aria-live="polite">
-          <article class="metric"><span class="metric-label">REAL API PROBES</span><strong class="metric-value" id="live-probe-count">—</strong><span class="metric-delta">最近一轮实际请求</span></article>
-          <article class="metric"><span class="metric-label">CONFIRMED BUGS</span><strong class="metric-value" id="live-finding-count">—</strong><span class="metric-delta">复测确认、按根因去重</span></article>
-          <article class="metric"><span class="metric-label">NEXT FOCUS</span><strong class="metric-value" id="live-focus">—</strong><span class="metric-delta">依据真实结果调整</span></article>
-        </div>
-        <div class="evolution-grid">
-          <article class="chart-card"><h3>已确认标本</h3><div class="candidate-list" id="live-findings">首次运行后显示</div></article>
-          <article class="chart-card"><h3>最近一轮请求证据</h3><div class="candidate-list" id="live-evidence">首次运行后显示</div></article>
-        </div>
-        <div class="chart-card" style="margin-top:18px"><h3>真实修复历史</h3><div class="candidate-list" id="live-fixes">复测确认修复后显示</div></div>
-        <p class="benchmark-note">这里的“真实”指当前部署服务的 API 代码路径和实际 D1 状态。它尚未连接你的业务 API；合成基准的数量和分数仍在上方单独展示。</p>
+        <div class="panel table-gap"><h3>E2 挑方向：项目画像 × 机会类型偏好</h3><p>颜色越亮，越优先在这类项目里找这类机会。</p><div style="overflow-x:auto"><table class="heat" id="priors"></table></div></div>
       </div>
     </section>
 
-    <section class="section-block" id="specimens" aria-labelledby="specimens-title">
+    <section class="section-block light" id="specimens" aria-labelledby="specimens-title">
       <div class="section-head">
-        <div><p class="eyebrow">03 / Specimen archive</p><h2 id="specimens-title">Bug 标本馆</h2></div>
-        <p class="section-intro">每个缺陷都会被保存为可复用标本：触发条件、最小复现输入、失败签名、修复建议与防复发测试。标本不是日志，而是下一代的训练材料。</p>
+        <div><p class="eyebrow">通过证据核对的机会</p><h2 id="specimens-title">Bug 标本馆</h2></div>
+        <p class="section-intro">每张卡片都指向真实仓库里的文件或 Issue。团队的“有用 / 没用”会直接进入奖励——这是内部工具目标最重要的信号。</p>
       </div>
-      <div class="specimen-grid" id="specimen-grid" aria-live="polite"><p>正在读取标本记录…</p></div>
+      <div class="specimen-grid" id="specimen-grid"></div>
     </section>
 
-    <section class="section-block" id="history" aria-labelledby="history-title">
+    <section class="section-block light" id="coverage" aria-labelledby="coverage-title">
       <div class="section-head">
-        <div><p class="eyebrow">04 / Evolution ledger</p><h2 id="history-title">修复历史</h2></div>
-        <p class="section-intro">每一代都保存候选、策略权重、合成得分、保留集结果、回归门槛和决策原因。失败候选也保留，网页从 D1 读取真实状态。</p>
+        <div><p class="eyebrow">覆盖情况</p><h2 id="coverage-title">测试覆盖图：看过哪里，修过什么</h2></div>
+        <p class="section-intro">仓库 × 机会类型。格子里是“发现 / 通过核对 / 已修复 / 已合并”。</p>
+      </div>
+      <div class="table-wrap"><table class="data" id="coverage-table"></table></div>
+    </section>
+
+    <section class="section-block light" id="history" aria-labelledby="history-title">
+      <div class="section-head">
+        <div><p class="eyebrow">可追溯</p><h2 id="history-title">修复历史与每轮记录</h2></div>
+        <p class="section-intro">失败和放弃同样被记录：它们是进化的原料。</p>
       </div>
       <div class="table-wrap">
-        <table>
-          <caption id="history-caption">手动实验与每日 Cron 共用同一进化循环；每次结果写入 D1。</caption>
-          <thead><tr><th>运行时间</th><th>触发方式</th><th>检查数</th><th>新标本</th><th>回归通过</th><th>记录摘要</th></tr></thead>
-          <tbody id="run-history"><tr><td colspan="6">正在读取运行历史…</td></tr></tbody>
+        <table class="data">
+          <caption>修复历史（最近 80 个机会）</caption>
+          <thead><tr><th>时间</th><th>仓库</th><th>机会</th><th>类型</th><th>状态</th><th>原因 / PR</th><th>奖励</th></tr></thead>
+          <tbody id="fix-history"></tbody>
         </table>
       </div>
-      <p class="history-note" id="history-note">晋级要求训练得分严格提高、保留集不退步且 100% 回归通过；否则保持现策略并公开拒绝原因。</p>
-      <div class="chart-card" style="margin-top:18px"><h3>最近代际与决策历史</h3><p>由 Cron / 手动触发的实验记录组成。</p><div class="generation-list" id="generation-history" aria-live="polite">正在读取代际历史…</div></div>
+      <div class="table-wrap table-gap">
+        <table class="data">
+          <caption>每轮记录</caption>
+          <thead><tr><th>日期</th><th>打法</th><th>仓库</th><th>发现</th><th>通过核对</th><th>进化决策</th><th>摘要</th></tr></thead>
+          <tbody id="round-history"></tbody>
+        </table>
+      </div>
     </section>
 
-    <section class="section-block" id="architecture" aria-labelledby="architecture-title">
+    <section class="section-block" id="architecture" aria-labelledby="arch-title">
       <div class="section-head">
-        <div><p class="eyebrow">05 / Cloud architecture</p><h2 id="architecture-title">Cloudflare 架构</h2></div>
-        <p class="section-intro">第一版坚持“小而可证”：一个 Worker、一个 D1 数据库、一套 Workers Static Assets。代码本身保持稳定，每日变化保存在可审计的测试基因与设计文档状态中。</p>
+        <div><p class="eyebrow">架构与接线</p><h2 id="arch-title">怎么跑起来</h2></div>
+        <p class="section-intro">完整需求见仓库 <code>docs/requirements.md</code>。</p>
       </div>
-      <div class="architecture-grid">
-        <div class="stack-map" aria-label="Cloudflare 部署数据流">
-          <div class="stack-node"><strong>Workers Static Assets</strong><span>托管这份 HTML5 项目设计页、样式与可视化资源</span></div>
-          <div class="stack-node"><strong>Cloudflare Worker</strong><span>提供状态 API、评估候选策略、返回最新项目设计数据</span></div>
-          <div class="stack-node"><strong>Cron Trigger → scheduled()</strong><span>每天 UTC 定时唤醒一次进化流程；它是时钟，不是进步本身</span></div>
-          <div class="stack-node"><strong>D1 Evolution Ledger</strong><span>保存测试基因、标本、实验、算子权重、设计修订与回滚点</span></div>
+      <div class="arch-grid">
+        <div class="stack">
+          <div><strong>Cron Trigger → scheduled()</strong>每 20 分钟调用一次 <code>tick()</code>：规划本轮 / 侦察一个仓库 / 收尾进化。</div>
+          <div><strong>Cloudflare Worker</strong>GitHub API 侦察、CommandCode AI 诊断与反思、证据核对、执行器与团队反馈接口。</div>
+          <div><strong>D1</strong>targets · rounds · repo_scans · opportunities · events · feedback · playbooks · evolution_steps。</div>
+          <div><strong>Workers Static Assets</strong>本页面：读取 <code>/api/state</code> 渲染进化树、看板和历史。</div>
+          <div><strong>执行器 executor/hunt-fix.mjs</strong>克隆、测试、修改、回传；<code>--submit</code> 在人工审核后提 PR。</div>
         </div>
-        <article class="design-doc">
-          <p class="eyebrow">Living specification</p>
-          <h3>网页如何反过来更新</h3>
-          <ul>
-            <li><strong>指标区：</strong>从 D1 读取合成基准分支、训练 / 保留集得分、回归通过率与当前策略权重；不会伪称是真实代码覆盖率。</li>
-            <li><strong>标本馆：</strong>显示当天新发现或新修复的缺陷样本。</li>
-            <li><strong>设计摘要：</strong>自动更新“当前瓶颈、已证伪假设、下一代目标”。</li>
-            <li><strong>历史表：</strong>保留失败实验和拒绝原因，不让系统美化自己的表现。</li>
-          </ul>
-          <div class="doc-update" id="design-revision"><strong>当前阶段：</strong>正在加载 D1 中最新的运行总结与设计修订。</div>
+        <article class="card">
+          <h3>配置</h3>
+          <p>Secret 只放在 Cloudflare，不进仓库、页面或数据库。</p>
+<pre>npx wrangler secret put CMD_API_KEY    # AI 诊断与反思
+npx wrangler secret put GITHUB_TOKEN   # 可选：只读，提高限额
+npx wrangler secret put HUNTER_TOKEN   # 执行器鉴权
+
+# wrangler.toml [vars]
+INTERNAL_REPOS = "team/recruit-dashboard"      # 默认只读
+OSS_REPOS      = "owner/repo:pr"               # 可提 PR
+DISCOVERY      = "on"
+
+npx wrangler d1 migrations apply bug-hunter-rsi --remote
+HUNTER_URL=… HUNTER_TOKEN=… CMD_API_KEY=… node executor/hunt-fix.mjs</pre>
         </article>
       </div>
     </section>
-
-    <section class="section-block" id="roadmap" aria-labelledby="roadmap-title">
-      <div class="section-head">
-        <div><p class="eyebrow">06 / Delivery map</p><h2 id="roadmap-title">从演示到真实进化</h2></div>
-        <p class="section-intro">先在可控样本仓库里证明进化闭环，再接入真实项目。入门版不允许系统自动合并修复，只生成证据与建议。</p>
-      </div>
-      <div class="roadmap-grid">
-        <div class="roadmap-list">
-          <article class="phase"><div class="phase-code">PHASE 01<br>已完成</div><div><h3>样本场与运行台账</h3><p>Worker API、D1 标本库、运行历史与每日 Cron 已接入。</p></div></article>
-          <article class="phase"><div class="phase-code">PHASE 02<br>已接入</div><div><h3>受控策略进化</h3><p>五候选竞赛、四类搜索算子、稳定测试库、建议规则版本与严格晋级门槛已运行。</p></div></article>
-          <article class="phase"><div class="phase-code">PHASE 03<br>后续扩展</div><div><h3>接入真实仓库</h3><p>将合成基准替换为只读目标仓库测试，并用真实覆盖与回归结果校准策略。</p></div></article>
-          <article class="phase"><div class="phase-code">PHASE 04</div><div><h3>人工复核修复建议</h3><p>把候选生成的修复建议交给人验证；第一版不会修改生产代码或自动合并。</p></div></article>
-        </div>
-        <aside class="guardrails">
-          <p class="eyebrow" style="color:#a8ff53">Promotion gates</p>
-          <h3>不可绕过的护栏</h3>
-          <ul>
-            <li>候选只在封闭合成基准中生成有限测试输入，不执行任意代码，也不接触生产密钥与数据。</li>
-            <li>回归通过率必须保持 100%，否则自动拒绝。</li>
-            <li>每日计算、时间与 API 成本设硬上限。</li>
-            <li>评分使用保留集，避免只对公开样本过拟合。</li>
-            <li>设计网页显示失败与回滚，不只展示成功。</li>
-            <li>修复建议不得自动合并，第一版坚持 human-in-the-loop。</li>
-          </ul>
-        </aside>
-      </div>
-    </section>
   </main>
-
-  <footer>
-    <div class="footer-inner"><p><strong>Bug Hunter / Design v0.2</strong> · 入门级 Recursive Self-Improvement 演示</p><p>目标：让“进步”可测量、可拒绝、可回滚、可解释。</p></div>
-  </footer>
+  <footer><div style="width:min(1320px, calc(100% - 32px));margin:0 auto">Bug Hunter · AI 自进化项目带练 · 页面数据每分钟从 D1 刷新 · 版本 <span id="framework-version">2.0.0</span></div></footer>
 
   <script>
-    const byId = (id) => document.getElementById(id);
-    const setMetric = (key, value, note) => {
-      document.querySelector(`[data-metric="${key}"]`).textContent = value;
-      document.querySelector(`[data-delta="${key}"]`).textContent = note;
-    };
-    const formatTime = (value) => value
-      ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
-      : "—";
+    const TYPE_LABELS = { bug: "真实 Bug", accuracy: "准确性", performance: "速度", slimming: "代码瘦身", "ux-ui": "体验 / 界面", "small-feature": "小功能", "competitor-gap": "竞品缺口" };
+    const STATUS_LABELS = { discarded: ["核对未通过", "bad"], verified: ["已核对", ""], queued: ["排队修复", "warn"], claimed: ["执行器处理中", "warn"], abandoned: ["已放弃", "bad"], "tests-failed": ["测试失败", "bad"], "ready-for-review": ["待审核", "good"], submitted: ["PR 已提交", "good"] };
+    const DECISIONS = { promoted: "晋级", challenger: "成为挑战者", rejected: "淘汰", "challenger-promoted": "挑战者晋级", "challenger-retired": "挑战者退役", "challenger-testing": "A/B 进行中", "insufficient-evidence": "证据不足", "no-change": "无变化" };
+    const NODE_COLORS = { champion: "#a8ff53", challenger: "#ffc857", retired: "#6d7fe3", rejected: "#ff765e" };
+    const $ = (id) => document.getElementById(id);
+    let state = null;
+    let selectedVersion = null;
 
-    function appendText(parent, tagName, className, value) {
-      const node = document.createElement(tagName);
-      if (className) node.className = className;
-      node.textContent = value;
-      parent.append(node);
+    // Build DOM with textContent only: titles come from GitHub and model output.
+    function el(tag, attrs = {}, ...children) {
+      const node = document.createElement(tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (value == null || value === false) continue;
+        if (key === "class") node.className = value;
+        else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+        else node.setAttribute(key, value === true ? "" : value);
+      }
+      for (const child of children.flat()) if (child != null) node.append(child instanceof Node ? child : String(child));
       return node;
     }
-
-    function renderEvolution(state) {
-      const evolution = state.evolution || {};
-      const labels = evolution.operatorLabels || {};
-      const weights = evolution.policy?.weights || {};
-      const weightRoot = byId("operator-weights");
-      weightRoot.replaceChildren();
-      for (const [operator, weight] of Object.entries(weights)) {
-        const row = document.createElement("div");
-        row.className = "operator-row";
-        appendText(row, "span", "", labels[operator] || operator);
-        const track = document.createElement("div");
-        track.className = "operator-track";
-        track.setAttribute("role", "img");
-        track.setAttribute("aria-label", `${labels[operator] || operator} ${weight}%`);
-        const fill = document.createElement("div");
-        fill.className = "operator-fill";
-        fill.style.width = `${Math.max(0, Math.min(100, Number(weight) || 0))}%`;
-        track.append(fill);
-        row.append(track);
-        appendText(row, "strong", "", `${weight}%`);
-        weightRoot.append(row);
+    function svg(tag, attrs = {}, ...children) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (key.startsWith("on")) node.addEventListener(key.slice(2), value); else node.setAttribute(key, value);
       }
-      if (!Object.keys(weights).length) weightRoot.textContent = "等待首次策略初始化";
+      for (const child of children) node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+      return node;
+    }
+    const replace = (id, ...children) => $(id).replaceChildren(...children.flat());
+    const fmtTime = (iso) => iso ? new Date(iso).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+    const repoLink = (repo) => el("a", { href: `https://github.com/${repo}`, target: "_blank", rel: "noopener" }, repo);
+    const safeUrl = (url) => /^https:\/\/github\.com\//.test(url || "") ? url : null;
 
-      const candidateRoot = byId("candidate-history");
-      candidateRoot.replaceChildren();
-      const latest = evolution.latest;
-      for (const candidate of latest?.candidates || []) {
-        const item = document.createElement("article");
-        item.className = "candidate-item";
-        const promoted = candidate.disposition === "promoted";
-        appendText(item, "strong", "", `${candidate.id} · ${promoted ? "晋级" : "未晋级"}`);
-        appendText(item, "p", "", `训练 ${candidate.training_score} · 保留集 ${candidate.holdout_score} · 回归 ${candidate.regression_passed}/${candidate.regression_total}`);
-        if (!promoted) appendText(item, "p", "", `拒绝原因：${candidate.rejection_reason || "候选得分未胜出"}`);
-        candidateRoot.append(item);
+    function renderTree() {
+      const nodes = state.playbooks;
+      const children = new Map();
+      for (const node of nodes) {
+        const key = node.parent ?? "root";
+        if (!children.has(key)) children.set(key, []);
+        children.get(key).push(node);
       }
-      if (!latest?.candidates?.length) candidateRoot.textContent = "等待首轮候选评估";
-
-      const generationRoot = byId("generation-history");
-      generationRoot.replaceChildren();
-      for (const generation of evolution.generations || []) {
-        const item = document.createElement("article");
-        item.className = "generation-item";
-        const decision = generation.decision === "promoted" ? "策略晋级" : "保持当前策略";
-        appendText(item, "strong", "", `第 ${generation.generation} 代 · ${decision} · ${formatTime(generation.created_at)}`);
-        appendText(item, "p", "", `训练 ${generation.champion_score}（基线 ${generation.baseline_score}）· 保留集 ${generation.champion_holdout_score}（基线 ${generation.baseline_holdout_score}）`);
-        appendText(item, "p", "", `回归 ${generation.regression_passed}/${generation.regression_total} · 新测试 ${generation.test_cases_added} · 新标本 ${generation.new_findings}`);
-        appendText(item, "p", "", generation.decision_reason || generation.summary || "");
-        generationRoot.append(item);
+      const layout = new Map();
+      let leaf = 0;
+      let maxDepth = 0;
+      const place = (node, depth) => {
+        maxDepth = Math.max(maxDepth, depth);
+        const kids = children.get(node.version) || [];
+        if (!kids.length) { layout.set(node.version, { x: leaf++, depth }); return; }
+        kids.forEach((kid) => place(kid, depth + 1));
+        const xs = kids.map((kid) => layout.get(kid.version).x);
+        layout.set(node.version, { x: (Math.min(...xs) + Math.max(...xs)) / 2, depth });
+      };
+      (children.get("root") || []).forEach((root) => place(root, 0));
+      const gapX = 70, gapY = 78, pad = 50;
+      const width = Math.max(420, pad * 2 + Math.max(0, leaf - 1) * gapX);
+      const height = Math.max(360, pad * 2 + maxDepth * gapY + 20);
+      const offset = (width - (pad * 2 + Math.max(0, leaf - 1) * gapX)) / 2;
+      const pos = (version) => {
+        const item = layout.get(version);
+        return { x: pad + offset + item.x * gapX, y: height - pad - item.depth * gapY };
+      };
+      const root = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `共 ${nodes.length} 个打法版本` });
+      root.append(svg("path", { d: `M${width / 2 - 60} ${height - 12}h120`, stroke: "#6d7fe3", "stroke-width": 3, "stroke-linecap": "round" }));
+      for (const node of nodes) {
+        if (node.parent == null || !layout.has(node.parent)) continue;
+        const a = pos(node.parent), b = pos(node.version);
+        root.append(svg("path", { d: `M${a.x} ${a.y}C${a.x} ${(a.y + b.y) / 2} ${b.x} ${(a.y + b.y) / 2} ${b.x} ${b.y}`, fill: "none", stroke: node.status === "rejected" ? "#8a4b50" : "#8fa0f0", "stroke-width": node.status === "rejected" ? 2 : 4, "stroke-dasharray": node.status === "rejected" ? "5 5" : "" }));
       }
-      if (!(evolution.generations || []).length) generationRoot.textContent = "等待首轮 RSI 实验记录";
+      for (const node of nodes) {
+        if (!layout.has(node.version)) continue;
+        const { x, y } = pos(node.version);
+        const radius = node.status === "champion" ? 20 : node.status === "rejected" ? 11 : 15;
+        const group = svg("g", { class: `tree-node${node.version === selectedVersion ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `v${node.version} ${node.status}`,
+          onclick: () => selectNode(node.version), onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectNode(node.version); } } },
+          svg("circle", { cx: x, cy: y, r: radius, fill: NODE_COLORS[node.status] || "#6d7fe3", stroke: "#0a1235", "stroke-width": 3 }),
+          svg("text", { x, y: y + 4, "text-anchor": "middle", "font-size": 11, "font-weight": 800, fill: "#0a1235", "font-family": "ui-monospace, monospace" }, `v${node.version}`));
+        root.append(group);
+      }
+      replace("playbook-tree", root);
     }
 
-    function renderState(state) {
-      const ready = state.status === "ready";
-      const metrics = state.metrics || {};
-      const evolution = state.evolution || {};
-      const live = state.liveHunt || {};
-      byId("live-hunt-status").textContent = live.latest
-        ? `最近运行 · ${formatTime(live.latest.finished_at)} · 新发现 ${live.latest.new_count} · AI ${live.latest.ai_status === "ready" ? `已生成 ${live.latest.ai_probe_count} 项` : live.latest.ai_status}`
-        : "等待第一次真实探测";
-      byId("live-probe-count").textContent = live.latest ? String(live.latest.probe_count) : "0";
-      byId("live-finding-count").textContent = String(live.findings?.length || 0);
-      byId("live-focus").textContent = live.policy?.focus === "methods" ? "请求方法" : "均衡探索";
-      const liveFindings = byId("live-findings");
-      liveFindings.replaceChildren();
-      for (const finding of live.findings || []) {
-        const item = document.createElement("article");
-        item.className = "candidate-item";
-        appendText(item, "strong", "", `${finding.title} · ${finding.status}`);
-        appendText(item, "p", "", `复现：${finding.reproduction}`);
-        appendText(item, "p", "", `建议：${finding.recommendation}`);
-        liveFindings.append(item);
-      }
-      if (!live.findings?.length) liveFindings.textContent = "尚无复测确认的真实 API 问题";
-      const liveEvidence = byId("live-evidence");
-      liveEvidence.replaceChildren();
-      for (const evidence of live.evidence || []) {
-        const item = document.createElement("article");
-        item.className = "candidate-item";
-        appendText(item, "strong", "", `${evidence.request} · ${evidence.inconclusive ? "无法判定" : evidence.passed ? "通过" : "失败"}`);
-        appendText(item, "p", "", `预期：${evidence.expected}`);
-        appendText(item, "p", "", `实际：${evidence.actual}`);
-        liveEvidence.append(item);
-      }
-      if (!live.evidence?.length) liveEvidence.textContent = "首次运行后显示实际请求与响应";
-      const liveFixes = byId("live-fixes");
-      liveFixes.replaceChildren();
-      for (const fix of live.fixes || []) {
-        const item = document.createElement("article");
-        item.className = "candidate-item";
-        appendText(item, "strong", "", `${fix.finding_id} · ${formatTime(fix.resolved_at)}`);
-        appendText(item, "p", "", fix.evidence);
-        liveFixes.append(item);
-      }
-      if (!live.fixes?.length) liveFixes.textContent = "尚无回归确认的修复";
-      const generation = Number(metrics.generation || 0);
-      byId("runtime-pill").classList.toggle("is-waiting", !ready);
-      byId("runtime-status").textContent = generation
-        ? `RSI 第 ${generation} 代 · ${state.evolution.latest?.decision === "promoted" ? "策略已晋级" : "实验已记录"}`
-        : "RSI 引擎就绪 · 等待首次实验";
-      byId("runtime-short").textContent = generation ? `第 ${generation} 代` : "待进化";
-      byId("hero-run-count").textContent = String(generation);
-      byId("hero-run-label").textContent = generation ? "已记录的策略进化代数" : "当前进化代数";
-      byId("range-title").textContent = state.latestRun
-        ? `最近运行 · ${formatTime(state.latestRun.finished_at)}`
-        : "等待首次进化实验";
-      setMetric("generation", String(generation), generation ? `最近运行：${formatTime(state.latestRun?.finished_at)}` : "每天 10:00（首尔时间）自动实验");
-      setMetric("findings", String(metrics.knownSpecimens || 0), `${metrics.fixturesDetected || 0} 个新标本来自最近运行`);
-      setMetric("coverage", `${metrics.branchCoverage || 0}%`, `${metrics.branchesCovered || 0}/${metrics.branchesTotal || 0} 个合成分支`);
-      setMetric("score", String(metrics.evolutionScore || 0), "训练集策略得分（代理指标）");
-      setMetric("holdout", String(metrics.holdoutScore || 0), "未参与策略调参的保留集");
-      const latest = evolution.latest;
-      setMetric("regression", latest ? `${latest.regression_total ? Math.round(latest.regression_passed / latest.regression_total * 100) : 100}%` : "—",
-        latest ? `${latest.regression_passed}/${latest.regression_total} 项 · 门槛 100%` : "等待首轮回归评估");
-      setMetric("test-cases", String(evolution.testCaseCount || 0), `测试库 v${evolution.policy?.boundaryLibraryVersion || 1}`);
-      renderEvolution(state);
+    function selectNode(version) {
+      selectedVersion = version;
+      const node = state.playbooks.find((item) => item.version === version);
+      if (!node) return;
+      $("node-title").textContent = `v${node.version} · ${({ champion: "冠军", challenger: "挑战者", retired: "退役", rejected: "淘汰" })[node.status] || node.status}${node.parent ? `（来自 v${node.parent}）` : "（树根）"}`;
+      $("node-reason").textContent = node.reason;
+      const metrics = node.metrics || {};
+      const keyLabel = (key) => state.vocab.features[key] || key.split("→").map((part, index) => index ? TYPE_LABELS[part] || part : state.vocab.profiles[part] || part).join(" → ");
+      const items = (node.diff || []).map((change) => el("li", {}, el("b", {}, `${change.area} · ${keyLabel(change.key)}`), " ",
+        change.from != null && change.to != null && typeof change.to === "number" ? `${change.from} → ${change.to}` : change.to || change.from));
+      if (metrics.settled != null) items.unshift(el("li", {}, el("b", {}, "证据"), ` 已结算 ${metrics.settled}，训练 ${metrics.train ?? "—"} / 保留 ${metrics.holdout ?? "—"}；回放得分 冠军 ${metrics.championScore ?? "—"} vs 候选 ${metrics.candidateScore ?? "—"}`));
+      if (!items.length) items.push(el("li", {}, "初始打法：尚无改动记录。"));
+      replace("node-diff", items);
+      renderTree();
+    }
 
-      const specimenGrid = byId("specimen-grid");
-      specimenGrid.replaceChildren();
-      for (const [index, specimen] of state.specimens.entries()) {
-        const card = document.createElement("article");
-        card.className = "specimen";
-        const top = document.createElement("div");
-        top.className = "specimen-top";
-        const id = document.createElement("span");
-        id.className = "specimen-id";
-        id.textContent = specimen.id.toUpperCase();
-        const severity = document.createElement("span");
-        severity.className = `severity ${specimen.severity === "critical" || specimen.severity === "high" ? "high" : "medium"}`;
-        severity.textContent = specimen.severity.toUpperCase();
-        top.append(id, severity);
-        const body = document.createElement("div");
-        body.className = "specimen-body";
-        const icon = document.createElement("div");
-        icon.className = "specimen-symbol";
-        icon.setAttribute("aria-hidden", "true");
-        icon.textContent = ["∞", "Ø", "↯"][index % 3];
-        const title = document.createElement("h3");
-        title.textContent = specimen.title;
-        const description = document.createElement("p");
-        description.textContent = specimen.description;
-        const details = document.createElement("dl");
-        for (const [label, value] of [["类别", specimen.category], ["首次记录", formatTime(specimen.first_seen_at)], ["来源", specimen.source === "synthetic" ? "合成基准样例" : "内置教学样例"]]) {
-          const dt = document.createElement("dt");
-          dt.textContent = label;
-          const dd = document.createElement("dd");
-          dd.textContent = value;
-          details.append(dt, dd);
-        }
-        body.append(icon, title, description, details);
-        const toggle = document.createElement("button");
-        toggle.className = "detail-toggle";
-        toggle.type = "button";
-        toggle.setAttribute("aria-expanded", "false");
-        toggle.textContent = "查看复现与建议";
-        const detail = document.createElement("div");
-        detail.className = "specimen-detail";
-        const repro = document.createElement("p");
-        const code = document.createElement("code");
-        code.textContent = specimen.reproduction;
-        repro.append(code);
-        const advice = document.createElement("p");
-        advice.textContent = specimen.recommendation;
-        detail.append(repro, advice);
-        toggle.addEventListener("click", () => {
-          const expanded = toggle.getAttribute("aria-expanded") === "true";
-          toggle.setAttribute("aria-expanded", String(!expanded));
-          detail.classList.toggle("open", !expanded);
+    function renderKpis() {
+      const t = state.totals;
+      const tiles = [["仓库已侦察", t.repos], ["发现机会", t.found], ["通过证据核对", t.verified], ["测试通过的修复", t.fixed], ["PR 已提交", t.submitted], ["PR 已合并", t.merged], ["已结算结果", t.settled], ["平均奖励", t.avg_reward ?? "—"]];
+      replace("kpis", tiles.map(([label, value]) => el("div", { class: "kpi" }, el("span", {}, label), el("strong", {}, value ?? 0))));
+      const trend = state.trend;
+      if (!trend.length) replace("reward-trend", el("div", { class: "empty" }, "还没有结算出奖励。机会需要经过修复、团队投票或 PR 结果才会产生奖励。"));
+      else {
+        const peak = Math.max(0.1, ...trend.map((row) => Math.abs(row.avg_reward)));
+        replace("reward-trend", el("div", { class: "bars" }, trend.map((row, index) => el("div", { class: `bar${row.avg_reward < 0 ? " negative" : ""}`, style: `height:${Math.max(4, Math.abs(row.avg_reward) / peak * 100)}%`, title: `${row.round_id}: ${row.avg_reward}（${row.n} 个）` }, index % Math.ceil(trend.length / 6) === 0 ? el("small", {}, row.round_id.slice(-5)) : null))));
+      }
+      const caps = state.capabilities;
+      const list = [["AI 诊断与反思（CMD_API_KEY）", caps.llm], ["GitHub 令牌（可选）", caps.githubToken], ["执行器鉴权（HUNTER_TOKEN）", caps.executor], ["内部仓库清单", caps.internalRepos], ["开源种子仓库", caps.ossRepos], ["自动发现开源仓库", caps.discovery]];
+      replace("capabilities", list.map(([label, on]) => el("li", {}, el("span", {}, label), el("span", { class: on ? "cap-on" : "cap-off" }, on ? "已接" : "未接"))));
+    }
+
+    function renderPlaybook() {
+      const champion = state.champion;
+      const mix = Object.entries(champion.goalMix || {}).map(([goal, share]) => `${state.vocab.goals[goal] || goal} ${Math.round(share * 100)}%`).join(" · ");
+      $("goal-mix").textContent = `冠军 v${champion.version}${state.challenger ? `，挑战者 v${state.challenger.version} 正在线上 A/B` : ""}。目标组合：${mix}。`;
+      replace("weights", Object.entries(state.vocab.features).map(([key, label]) => {
+        const value = Number(champion.repoSelection.weights[key] || 0);
+        const pct = Math.min(50, Math.abs(value) / 2 * 50);
+        return el("div", { class: "weight-row" }, el("span", {}, label),
+          el("div", { class: "weight-track" }, el("div", { class: `weight-fill${value < 0 ? " negative" : ""}`, style: value < 0 ? `right:50%;width:${pct}%` : `left:50%;width:${pct}%` })),
+          el("span", { class: "mono" }, value.toFixed(2)));
+      }));
+      replace("lessons", (champion.lessons || []).map((lesson) => el("li", {}, lesson.text,
+        el("small", {}, `${({ hunting: "找和修", pr: "写 PR", selection: "挑仓库" })[lesson.kind] || lesson.kind} · ${lesson.source === "reflection" ? `证据 ${lesson.evidence.length} 条` : "种子经验，待验证"}`))));
+      const types = Object.keys(state.vocab.types);
+      const rows = Object.entries(champion.opportunityPriors || {});
+      replace("priors", el("thead", {}, el("tr", {}, el("th", {}, "画像"), types.map((type) => el("th", {}, TYPE_LABELS[type] || type)))),
+        el("tbody", {}, rows.map(([profile, row]) => el("tr", {}, el("th", {}, state.vocab.profiles[profile] || profile), types.map((type) => {
+          const value = Number(row[type] || 0);
+          return el("td", { style: `background:rgba(168,255,83,${Math.min(1, 0.08 + value * 2.2)});color:${value >= 0.15 ? "#0a1235" : "#dce5ff"}` }, value.toFixed(2));
+        })))));
+    }
+
+    async function vote(id, verdict, button) {
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, verdict }) });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "反馈失败");
+        await loadState();
+      } catch (error) {
+        $("run-status").textContent = error.message;
+        button.disabled = false;
+      }
+    }
+
+    function renderSpecimens() {
+      const items = state.opportunities.filter((opp) => opp.status !== "discarded").slice(0, 24);
+      if (!items.length) return replace("specimen-grid", el("div", { class: "empty" }, "标本馆还是空的：需要先在 wrangler.toml 配置仓库，让 Cron 跑完第一轮。"));
+      replace("specimen-grid", items.map((opp) => {
+        const [label, tone] = STATUS_LABELS[opp.status] || [opp.status, ""];
+        const evidence = (opp.verification || []).map((check) => {
+          const href = check.kind === "issue" ? `https://github.com/${opp.repo}/issues/${encodeURIComponent(check.ref)}` : `https://github.com/${opp.repo}/blob/HEAD/${check.ref.split("/").map(encodeURIComponent).join("/")}`;
+          return el("li", {}, el("a", { href, target: "_blank", rel: "noopener" }, check.kind === "issue" ? `Issue #${check.ref}` : check.ref), ` — ${check.note}`);
         });
-        card.append(top, body, toggle, detail);
-        specimenGrid.append(card);
-      }
-      if (!state.specimens.length) specimenGrid.textContent = "首次运行后，合成基准缺陷会以标本形式保存在 D1。";
+        return el("article", { class: "specimen" },
+          el("div", { class: "specimen-top" }, el("span", {}, `${TYPE_LABELS[opp.type] || opp.type} · ${state.vocab.profiles[opp.profile] || opp.profile}`), el("span", { class: `chip ${tone}` }, label)),
+          el("div", { class: "specimen-body" }, el("h3", {}, opp.title), el("p", {}, repoLink(opp.repo), ` · ${opp.track === "internal" ? "内部" : "开源"} · 优先级 ${opp.priority} · ${opp.source === "ai" ? "AI 诊断" : "规则侦察"}`),
+            opp.summary ? el("p", {}, opp.summary) : null, el("ul", {}, evidence),
+            safeUrl(opp.pr_url) ? el("p", {}, el("a", { href: safeUrl(opp.pr_url), target: "_blank", rel: "noopener" }, "查看 PR"), opp.outcome ? ` · ${opp.outcome}` : "") : null),
+          el("div", { class: "vote" },
+            el("button", { type: "button", "aria-pressed": String(opp.team_verdict === "useful"), onclick: (event) => vote(opp.id, "useful", event.currentTarget) }, "👍 有用"),
+            el("button", { type: "button", "aria-pressed": String(opp.team_verdict === "not-useful"), onclick: (event) => vote(opp.id, "not-useful", event.currentTarget) }, "👎 没用")));
+      }));
+    }
 
-      const history = byId("run-history");
-      history.replaceChildren();
-      for (const run of state.runs) {
-        const row = document.createElement("tr");
-        const runType = run.generation
-          ? `${run.run_kind === "scheduled" ? "每日 Cron" : "手动实验"} · 第 ${run.generation} 代`
-          : run.run_kind === "scheduled" ? "每日定时" : "手动样本场";
-        const regressionRate = run.regression_total === undefined
-          ? `${Math.round(run.harness_passed / Math.max(run.checks_total, 1) * 100)}%`
-          : `${run.regression_total ? Math.round(run.regression_passed / run.regression_total * 100) : 100}%`;
-        const cells = [formatTime(run.finished_at), runType, run.checks_total,
-          run.fixtures_detected, regressionRate, run.summary];
-        for (const value of cells) {
-          const cell = document.createElement("td");
-          cell.textContent = value;
-          row.append(cell);
-        }
-        history.append(row);
-      }
-      if (!state.runs.length) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 6;
-        cell.textContent = "还没有进化记录。点击“运行一轮进化”启动首轮候选策略评估。";
-        row.append(cell);
-        history.append(row);
-      }
+    function renderCoverage() {
+      const types = Object.keys(state.vocab.types);
+      const repos = [...new Set(state.coverage.map((row) => row.repo))];
+      if (!repos.length) return replace("coverage-table", el("caption", {}, "还没有覆盖数据。"));
+      const cell = new Map(state.coverage.map((row) => [`${row.repo}|${row.type}`, row]));
+      replace("coverage-table",
+        el("caption", {}, "发现 / 通过核对 / 已修复 / 已合并"),
+        el("thead", {}, el("tr", {}, el("th", {}, "仓库"), types.map((type) => el("th", {}, TYPE_LABELS[type] || type)))),
+        el("tbody", {}, repos.map((repo) => el("tr", {}, el("td", {}, repoLink(repo)), types.map((type) => {
+          const row = cell.get(`${repo}|${type}`);
+          return el("td", { class: "num" }, row ? `${row.found} / ${row.verified} / ${row.fixed} / ${row.merged}` : "·");
+        })))));
+    }
 
-      const chart = byId("run-chart");
-      chart.replaceChildren();
-      if (!state.runs.length) {
-        chart.className = "empty-chart";
-        chart.textContent = "首次运行后显示历史记录";
-      } else {
-        chart.className = "run-bars";
-        state.runs.slice().reverse().forEach((run, index) => {
-          const bar = document.createElement("div");
-          bar.className = "run-bar";
-          const rate = run.regression_total === undefined
-            ? run.harness_passed / Math.max(run.checks_total, 1)
-            : run.regression_total ? run.regression_passed / run.regression_total : 1;
-          bar.style.height = `${Math.max(18, rate * 100)}%`;
-          bar.title = `${formatTime(run.finished_at)} · ${run.run_kind}`;
-          const label = document.createElement("span");
-          label.textContent = `R${index + 1}`;
-          bar.append(label);
-          chart.append(bar);
-        });
-      }
-
-      const categories = byId("sample-categories");
-      categories.replaceChildren();
-      const counts = new Map();
-      for (const specimen of state.specimens) counts.set(specimen.category, (counts.get(specimen.category) || 0) + 1);
-      for (const [name, count] of counts) {
-        const cell = document.createElement("span");
-        cell.className = "heat-cell";
-        cell.dataset.level = count > 1 ? "3" : "2";
-        cell.title = `${name}：${count} 个样例`;
-        cell.setAttribute("aria-label", cell.title);
-        categories.append(cell);
-      }
-      byId("category-legend").textContent = counts.size ? `${counts.size} 类 · ${state.specimens.length} 个合成 / 教学样例` : "暂无分类数据";
-      byId("design-revision").textContent = state.designRevision
-        ? `最近记录（${formatTime(state.designRevision.created_at)}）：${state.designRevision.body}`
-        : "每次 RSI 实验都会写入 D1；这份设计页从状态 API 读取最新策略、候选与结果。";
+    function renderHistory() {
+      const opps = state.opportunities;
+      replace("fix-history", opps.length ? opps.map((opp) => {
+        const [label, tone] = STATUS_LABELS[opp.status] || [opp.status, ""];
+        return el("tr", {}, el("td", {}, fmtTime(opp.updated_at)), el("td", {}, repoLink(opp.repo)), el("td", {}, opp.title), el("td", {}, TYPE_LABELS[opp.type] || opp.type),
+          el("td", {}, el("span", { class: `chip ${tone}` }, label), opp.team_verdict ? ` · 团队：${opp.team_verdict === "useful" ? "有用" : "没用"}` : ""),
+          el("td", {}, safeUrl(opp.pr_url) ? el("a", { href: safeUrl(opp.pr_url), target: "_blank", rel: "noopener" }, `PR ${opp.outcome || "进行中"}`) : opp.status_reason),
+          el("td", { class: "num" }, opp.reward ?? "待定"));
+      }) : el("tr", {}, el("td", { colspan: 7 }, "暂无记录。")));
+      replace("round-history", state.rounds.length ? state.rounds.map((round) => el("tr", {},
+        el("td", {}, round.day), el("td", {}, `v${round.champion_version}${round.challenger_version ? ` / v${round.challenger_version}` : ""}`),
+        el("td", { class: "num" }, round.repos), el("td", { class: "num" }, round.found), el("td", { class: "num" }, round.verified),
+        el("td", {}, round.status === "finalized" ? DECISIONS[round.decision] || round.decision || "—" : "进行中"), el("td", {}, round.summary || "侦察中…"))) : el("tr", {}, el("td", { colspan: 7 }, "还没有运行过。")));
     }
 
     async function loadState() {
-      const response = await fetch("/api/state", { headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error(`项目状态读取失败 (${response.status})`);
-      renderState(await response.json());
+      try {
+        const response = await fetch("/api/state", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        state = await response.json();
+        const settled = Number(state.totals.settled || 0);
+        $("live-version").textContent = `v${state.champion.version}`;
+        $("live-evidence").textContent = `已结算结果 ${settled} 个 · 共 ${state.playbooks.length} 个版本`;
+        $("framework-version").textContent = state.framework.version;
+        $("status-pill").classList.toggle("is-waiting", !state.rounds.length);
+        $("status-text").textContent = state.rounds.length ? `最近一轮 ${state.rounds[0].day}` : "等待第一轮";
+        renderKpis();
+        renderPlaybook();
+        renderSpecimens();
+        renderCoverage();
+        renderHistory();
+        selectNode(selectedVersion ?? state.champion.version);
+      } catch (error) {
+        $("status-text").textContent = "数据暂不可用";
+        $("node-reason").textContent = `无法读取 /api/state：${error.message}`;
+      }
     }
 
-    byId("run-sample").addEventListener("click", async () => {
-      const button = byId("run-sample");
+    $("tick-button").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
       button.disabled = true;
-      button.textContent = "评估五个候选…";
+      $("run-status").textContent = "推进中…";
       try {
-        const response = await fetch("/api/evolve", { method: "POST" });
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || "运行失败");
-        }
+        const response = await fetch("/api/tick", { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "推进失败");
+        $("run-status").textContent = ({ planned: "已规划本轮", scouted: `已侦察 ${body.repo}`, "scout-failed": `侦察失败：${body.repo}`, finalized: "本轮已收尾", idle: "今天这一轮已完成" })[body.step] || body.step;
         await loadState();
       } catch (error) {
-        byId("range-title").textContent = error.message;
+        $("run-status").textContent = error.message;
       } finally {
         button.disabled = false;
-        button.textContent = "运行一轮进化";
       }
     });
 
-    byId("run-live-hunt").addEventListener("click", async () => {
-      const button = byId("run-live-hunt");
-      button.disabled = true;
-      button.textContent = "正在复测 API…";
-      try {
-        const response = await fetch("/api/hunt", { method: "POST" });
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || "捉虫失败");
-        }
-        await loadState();
-      } catch (error) {
-        byId("live-hunt-status").textContent = error.message;
-      } finally {
-        button.disabled = false;
-        button.textContent = "运行真实 API 捉虫";
-      }
-    });
-
-    loadState().catch((error) => {
-      byId("runtime-status").textContent = "无法连接项目 API";
-      byId("runtime-short").textContent = "离线";
-      byId("range-title").textContent = error.message;
-      byId("specimen-grid").textContent = "状态接口暂不可用；部署后这里会显示 D1 中的合成缺陷标本。";
-      byId("run-history").innerHTML = '<tr><td colspan="6">暂时无法读取 D1 运行记录。</td></tr>';
-    });
-    setInterval(() => loadState().catch(() => {}), 300_000);
+    loadState();
+    setInterval(() => loadState(), 60_000);
   </script>
 </body>
 </html>

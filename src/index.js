@@ -1,491 +1,228 @@
-import { runSampleArena, sampleCatalog } from "./arena.js";
-import { runApiHunt } from "./live-hunt.js";
-import { generateAiProbes } from "./ai-probes.js";
-import {
-  BENCHMARK_BRANCHES_TOTAL,
-  DEFAULT_POLICY,
-  MAX_PROBES_PER_CANDIDATE,
-  OPERATOR_IDS,
-  runEvolutionCycle,
-} from "./evolution.js";
+import { GOALS, LIMITS, OPPORTUNITY_TYPES, PROFILES, REPO_FEATURES } from "./config.js";
+import { createGitHub, parsePullUrl } from "./github.js";
+import { createLlm } from "./llm.js";
+import { ensureGenesis, loadPlaybooks, tick } from "./pipeline.js";
 
-const OPERATOR_LABELS = Object.freeze({
-  boundary: "边界值",
-  sequence: "状态序列",
-  concurrency: "并发交错",
-  reduction: "失败缩减",
-});
-
-const RULE_TEXT = Object.freeze({
-  boundary: "在业务运算前验证负数、零值、上限与精度边界，并将新边界加入回归集。",
-  sequence: "把订单与支付操作建模为显式状态机；重试、撤销和重复提交必须幂等。",
-  concurrency: "库存和支付写入使用原子条件更新及幂等键，并覆盖并发交错顺序。",
-  reduction: "将失败事件序列缩减为最短可重放用例，保留原始失败签名作为回归。",
-});
+const VERSION = "2.0.0";
+const ATTEMPT_STATUSES = new Set(["abandoned", "tests-failed", "ready-for-review", "submitted"]);
 
 const json = (value, status = 200) => new Response(JSON.stringify(value), {
   status,
   headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
 });
-
-const safeJson = (value, fallback = null) => {
-  if (value == null) return fallback;
-  try { return typeof value === "string" ? JSON.parse(value) : value; }
-  catch { return fallback; }
+const rows = (result) => result?.results || [];
+const safeJson = (value, fallback) => {
+  try { return value == null ? fallback : JSON.parse(value); } catch { return fallback; }
 };
-
-const resultRows = (result) => result?.results || [];
-
-function chunks(values, size) {
-  const output = [];
-  for (let index = 0; index < values.length; index += size) output.push(values.slice(index, index + size));
-  return output;
-}
-
-function appendRowStatements(statements, db, sql, rows, size = 20) {
-  for (const group of chunks(rows, size)) {
-    statements.push(...group.map((row) => db.prepare(sql).bind(...row)));
-  }
-}
-
-async function readPolicy(db) {
-  const row = await db.prepare("SELECT value FROM system_state WHERE key = ?")
-    .bind("test_policy").first();
-  const saved = safeJson(row?.value);
-  return {
-    ...DEFAULT_POLICY,
-    ...saved,
-    weights: { ...DEFAULT_POLICY.weights, ...(saved?.weights || {}) },
-  };
-}
-
-async function claimManualRun(db, kind = "evolution") {
-  const bucket = `${kind}:${Math.floor(Date.now() / 60_000)}`;
-  const result = await db.prepare("INSERT OR IGNORE INTO manual_run_limits(bucket, created_at) VALUES (?, ?)")
-    .bind(bucket, new Date().toISOString()).run();
-  return Number(result?.meta?.changes || 0) > 0;
-}
-
-async function runLiveHunt(db, kind, origin, env) {
-  const startedAt = new Date().toISOString();
-  const scheduledFor = kind === "scheduled" ? startedAt.slice(0, 10) : null;
-  if (scheduledFor) {
-    const previous = await db.prepare("SELECT id FROM live_hunt_runs WHERE scheduled_for = ?")
-      .bind(scheduledFor).first();
-    if (previous) return { skipped: true, reason: "already-ran-today", id: previous.id };
-  }
-  const [savedPolicy, knownResult] = await Promise.all([
-    db.prepare("SELECT value FROM system_state WHERE key = 'live_hunt_policy'").first(),
-    db.prepare("SELECT id, status FROM live_hunt_findings").all(),
-  ]);
-  const policy = safeJson(savedPolicy?.value, { version: 1, cursor: 0, focus: "balanced" });
-  const ai = await generateAiProbes({
-    apiKey: env.CMD_API_KEY,
-    knownFindings: resultRows(knownResult).map((row) => row.id),
-  });
-  const result = await runApiHunt({
-    origin,
-    invoke: (request) => worker.fetch(request, env),
-    policy,
-    knownFindings: resultRows(knownResult).map((row) => row.id),
-    openFindings: resultRows(knownResult).filter((row) => row.status === "open").map((row) => row.id),
-    suggestedProbes: ai.probes,
-  });
-  const finishedAt = new Date().toISOString();
-  const id = `live-${crypto.randomUUID()}`;
-  const summary = `${result.probes.length} 项真实 API 探测（AI 建议 ${ai.probes.length} 项，状态 ${ai.status}）；确认 ${result.findings.length} 类失败，新发现 ${result.newFindings.length} 类，回归确认修复 ${result.resolvedFindings.length} 类；下一轮焦点：${result.nextPolicy.focus}。`;
-  const writes = [db.prepare(`
-    INSERT INTO live_hunt_runs(id, run_kind, scheduled_for, created_at, finished_at, target,
-      probe_count, confirmed_count, new_count, policy_before_json, policy_after_json, decision,
-      ai_status, ai_probe_count, summary)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, kind, scheduledFor, startedAt, finishedAt, origin,
-    result.probes.length, result.findings.length, result.newFindings.length,
-    JSON.stringify(policy), JSON.stringify(result.nextPolicy), result.decision,
-    ai.status, ai.probes.length, summary)];
-  for (const probe of result.probes) {
-    writes.push(db.prepare(`
-      INSERT INTO live_hunt_evidence(run_id, probe_id, request, expected, actual, status, passed, inconclusive)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(id, probe.id, probe.request, probe.expected, probe.actual, probe.status,
-      Number(probe.passed), Number(probe.inconclusive)));
-  }
-  for (const finding of result.findings) {
-    writes.push(db.prepare(`
-      INSERT INTO live_hunt_findings(id, title, severity, category, description, reproduction,
-        recommendation, expected, actual, first_seen_at, last_seen_at, times_seen, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'open')
-      ON CONFLICT(id) DO UPDATE SET last_seen_at = excluded.last_seen_at,
-        actual = excluded.actual, reproduction = excluded.reproduction,
-        times_seen = live_hunt_findings.times_seen + 1, status = 'open'
-    `).bind(finding.id, finding.title, finding.severity, finding.category, finding.description,
-      finding.reproduction, finding.recommendation, finding.expected, finding.actual,
-      startedAt, finishedAt));
-  }
-  for (const findingId of result.resolvedFindings) {
-    const regression = result.probes.find((probe) => probe.id === "health-post");
-    writes.push(db.prepare("UPDATE live_hunt_findings SET status = 'resolved', last_seen_at = ? WHERE id = ?")
-      .bind(finishedAt, findingId));
-    writes.push(db.prepare(`
-      INSERT INTO live_hunt_fix_events(id, run_id, finding_id, resolved_at, evidence)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(`fix-${id}-${findingId}`, id, findingId, finishedAt,
-      `${regression.request} → ${regression.actual}; expected ${regression.expected}`));
-  }
-  writes.push(db.prepare(`INSERT OR REPLACE INTO system_state(key, value, updated_at)
-    VALUES ('live_hunt_policy', ?, ?)`).bind(JSON.stringify(result.nextPolicy), finishedAt));
-  writes.push(db.prepare(`INSERT INTO design_revisions(id, created_at, run_id, title, body, source)
-    VALUES (?, ?, NULL, ?, ?, 'live-api')`)
-    .bind(`revision-${id}`, finishedAt, "真实 API 捉虫闭环", summary));
-  await db.batch(writes);
-  return { id, kind, startedAt, finishedAt, summary, ai: { status: ai.status, probeCount: ai.probes.length }, ...result };
-}
-
-async function recordSampleRun(db) {
-  const startedAt = new Date();
-  const arena = runSampleArena();
-  const finishedAt = new Date();
-  const runId = `sample-${startedAt.getTime()}-${crypto.randomUUID()}`;
-  const summary = `${arena.fixturesDetected} 个内置样例在 ${arena.checksTotal} 项自检中复现；这是固定样例演示，不是 RSI 进化。`;
-  const statements = [db.prepare(`
-    INSERT INTO runs(id, run_kind, started_at, finished_at, duration_ms, checks_total, harness_passed, fixtures_detected, summary)
-    VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?)
-  `).bind(runId, startedAt.toISOString(), finishedAt.toISOString(), arena.durationMs, arena.checksTotal, arena.harnessPassed, arena.fixturesDetected, summary)];
-
-  for (const item of arena.findings) {
-    const specimen = item.specimen;
-    statements.push(db.prepare(`
-      INSERT OR IGNORE INTO specimens(id, title, severity, category, description, reproduction, recommendation, first_seen_at, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(specimen.id, specimen.title, specimen.severity, specimen.category, specimen.description,
-      specimen.reproduction, specimen.recommendation, startedAt.toISOString(), "sample"));
-    statements.push(db.prepare("INSERT OR IGNORE INTO run_findings(run_id, specimen_id) VALUES (?, ?)").bind(runId, specimen.id));
-  }
-  statements.push(db.prepare(`
-    INSERT INTO design_revisions(id, created_at, run_id, title, body, source)
-    VALUES (?, ?, ?, ?, ?, 'sample')
-  `).bind(`revision-${runId}`, finishedAt.toISOString(), runId, "样本场运行记录",
-    `${arena.fixturesDetected} 个教学样例复现；测试策略与 RSI 版本未改变。`));
-  await db.batch(statements);
-
-  return {
-    id: runId,
-    kind: "manual",
-    startedAt: startedAt.toISOString(),
-    finishedAt: finishedAt.toISOString(),
-    durationMs: arena.durationMs,
-    ...arena,
-    summary,
-  };
-}
-
-function specimenFromFinding(finding, createdAt) {
-  const titlePrefix = {
-    boundary: "边界输入",
-    sequence: "状态序列",
-    concurrency: "并发交错",
-    reduction: "缩减回放",
-  }[finding.operator] || "合成样例";
-  return {
-    id: finding.specimenId,
-    title: `${titlePrefix}：${finding.specimenId.replaceAll("-", " ")}`,
-    severity: finding.severity,
-    category: OPERATOR_LABELS[finding.operator] || "合成基准",
-    description: `合成基准中的可复现缺陷模型（分支 ${finding.branch}），仅用于验证 Bug Hunter 的策略搜索流程，不代表真实生产代码缺陷。`,
-    reproduction: finding.reproduction,
-    recommendation: RULE_TEXT[finding.operator] || "将该缺陷模型转成稳定、可重复的回归测试。",
-    firstSeenAt: createdAt,
-  };
-}
-
-async function runEvolution(db, kind) {
-  const now = new Date();
-  const createdAt = now.toISOString();
-  const scheduledFor = kind === "scheduled" ? createdAt.slice(0, 10) : null;
-
-  if (scheduledFor) {
-    const existing = await db.prepare("SELECT generation FROM evolution_generations WHERE scheduled_for = ?")
-      .bind(scheduledFor).first();
-    if (existing) return { skipped: true, reason: "already-ran-today", generation: existing.generation };
-  }
-
-  const [policy, specimenRows, caseRows, latest, historyRows] = await Promise.all([
-    readPolicy(db),
-    db.prepare("SELECT id FROM specimens ORDER BY first_seen_at ASC LIMIT 5000").all(),
-    db.prepare("SELECT signature FROM test_case_library ORDER BY last_seen_at DESC LIMIT 5000").all(),
-    db.prepare("SELECT MAX(generation) AS generation FROM evolution_generations").first(),
-    db.prepare(`SELECT decision, operator_stats_json FROM evolution_generations ORDER BY generation DESC LIMIT 7`).all(),
-  ]);
-  const generation = Number(latest?.generation || 0) + 1;
-  const recentHistory = resultRows(historyRows).map((row) => ({
-    decision: row.decision,
-    operatorStats: safeJson(row.operator_stats_json, {}),
-  }));
-  const cycle = runEvolutionCycle({
-    policy,
-    generation,
-    seed: `${scheduledFor || createdAt.slice(0, 10)}:g${generation}`,
-    knownSpecimens: resultRows(specimenRows).map((row) => row.id),
-    knownCaseSignatures: resultRows(caseRows).map((row) => row.signature),
-    recentHistory,
-  });
-
-  const runId = `evolution-g${generation}-${crypto.randomUUID()}`;
-  const finishedAt = new Date().toISOString();
-  const checksTotal = cycle.candidates.reduce((sum, candidate) => sum + candidate.probes, 0);
-  const regressionTotal = cycle.candidates.reduce((sum, candidate) => sum + candidate.regressionTotal, 0);
-  const regressionPassed = cycle.candidates.reduce((sum, candidate) => sum + candidate.regressionPassed, 0);
-  const summary = `第 ${generation} 代：${cycle.decision === "promoted" ? "策略晋级" : "保留当前策略"}；${cycle.newFindings.length} 个新合成缺陷，${cycle.testCasesAdded} 条新测试输入；回归 ${regressionPassed}/${regressionTotal} 全通过。`;
-
-  const writes = [db.prepare(`
-    INSERT INTO runs(id, run_kind, started_at, finished_at, duration_ms, checks_total, harness_passed, fixtures_detected, summary)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(runId, kind, createdAt, finishedAt, cycle.durationMs, checksTotal, regressionPassed, cycle.newFindings.length, summary)];
-
-  writes.push(db.prepare(`
-    INSERT INTO evolution_generations(
-      generation, run_id, run_kind, scheduled_for, seed, created_at, decision, decision_reason,
-      baseline_score, baseline_holdout_score, champion_policy_json, champion_score, champion_holdout_score,
-      candidate_count, probes_total, branches_covered, regression_total, regression_passed, new_findings,
-      test_cases_added, recommendation_updates, operator_stats_json, summary
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(generation, runId, kind, scheduledFor, cycle.seed, createdAt, cycle.decision, cycle.decisionReason,
-    cycle.baseline.score, cycle.baseline.holdoutScore, JSON.stringify(cycle.champion.policy), cycle.champion.score,
-    cycle.champion.holdoutScore, cycle.candidates.length, checksTotal, cycle.branchesCovered,
-    regressionTotal, regressionPassed, cycle.newFindings.length, cycle.testCasesAdded,
-    cycle.recommendationUpdates, JSON.stringify(cycle.operatorStats), summary));
-
-  const rejectionReasons = new Map(cycle.rejections.map(({ id, reason }) => [id, reason]));
-  writes.push(...cycle.candidates.map((candidate) => db.prepare(`
-    INSERT INTO evolution_candidates(
-      id, generation, weights_json, training_score, holdout_score, branches_covered, probes,
-      regression_total, regression_passed, disposition, rejection_reason, findings_json, operator_stats_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(candidate.id, generation, JSON.stringify(candidate.weights), candidate.score, candidate.holdoutScore,
-    candidate.branchesCovered, candidate.probes, candidate.regressionTotal, candidate.regressionPassed,
-    cycle.promoted && candidate.id === cycle.champion.id ? "promoted" : "rejected",
-    cycle.promoted && candidate.id === cycle.champion.id ? null : rejectionReasons.get(candidate.id) || "not-selected",
-    JSON.stringify(candidate.findings.map(({ specimenId, operator, branch }) => ({ specimenId, operator, branch }))),
-    JSON.stringify(candidate.operatorStats))));
-
-  const allSpecimens = cycle.findings.map((finding) => specimenFromFinding(finding, createdAt));
-  appendRowStatements(writes, db, `
-    INSERT OR IGNORE INTO specimens(id, title, severity, category, description, reproduction, recommendation, first_seen_at, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synthetic')
-  `, allSpecimens.map((item) => [item.id, item.title, item.severity, item.category, item.description,
-    item.reproduction, item.recommendation, item.firstSeenAt]), 10);
-
-  const findingIds = [...new Set(cycle.findings.map(({ specimenId }) => specimenId))];
-  appendRowStatements(writes, db, "INSERT OR IGNORE INTO run_findings(run_id, specimen_id) VALUES (?, ?)",
-    findingIds.map((id) => [runId, id]), 40);
-
-  appendRowStatements(writes, db, `
-    INSERT INTO test_case_library(signature, case_id, operator, specimen_id, reproduction, first_generation, first_seen_at, last_seen_at, times_seen)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-    ON CONFLICT(signature) DO UPDATE SET last_seen_at = excluded.last_seen_at, times_seen = times_seen + 1
-  `, cycle.testedCases.map((item) => [item.signature, item.caseId, item.operator, item.specimenId,
-    item.reproduction, generation, createdAt, createdAt]), 10);
-
-  appendRowStatements(writes, db, `
-    INSERT INTO recommendation_rules(id, operator, text, version, evidence_count, last_generation, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET text = excluded.text, version = excluded.version,
-      evidence_count = recommendation_rules.evidence_count + excluded.evidence_count,
-      last_generation = excluded.last_generation, updated_at = excluded.updated_at
-  `, cycle.recommendationRules.map((rule) => [rule.id, rule.operator, RULE_TEXT[rule.operator],
-    cycle.champion.policy.recommendationRulesVersion, rule.evidenceDelta, generation, createdAt]), 10);
-
-  const revisionTitle = `第 ${generation} 代 · ${cycle.promoted ? "策略晋级" : "候选未晋级"}`;
-  const revisionBody = `${summary} ${cycle.decisionReason} 测试库版本 v${cycle.champion.policy.boundaryLibraryVersion}，修复建议规则 v${cycle.champion.policy.recommendationRulesVersion}。`;
-  writes.push(
-    db.prepare(`INSERT OR REPLACE INTO system_state(key, value, updated_at) VALUES ('test_policy', ?, ?)`)
-      .bind(JSON.stringify(cycle.champion.policy), finishedAt),
-    db.prepare(`INSERT INTO design_revisions(id, created_at, run_id, title, body, source) VALUES (?, ?, ?, ?, ?, 'rsi')`)
-      .bind(`revision-${runId}`, finishedAt, runId, revisionTitle, revisionBody),
-  );
-  await db.batch(writes);
-
-  return {
-    id: runId,
-    kind,
-    startedAt: createdAt,
-    finishedAt,
-    generation,
-    decision: cycle.decision,
-    promoted: cycle.promoted,
-    decisionReason: cycle.decisionReason,
-    baseline: cycle.baseline,
-    champion: cycle.champion,
-    candidates: cycle.candidates.map(({ id, weights, score, holdoutScore, probes, regressionTotal: candidateRegressionTotal, regressionPassed: candidateRegressionPassed }) => ({
-      id, weights, score, holdoutScore, probes,
-      regressionTotal: candidateRegressionTotal,
-      regressionPassed: candidateRegressionPassed,
-    })),
-    branchesCovered: cycle.branchesCovered,
-    newFindings: cycle.newFindings.map(({ specimenId, operator }) => ({ specimenId, operator })),
-    testCasesAdded: cycle.testCasesAdded,
-    recommendationUpdates: cycle.recommendationUpdates,
-    checksTotal,
-    regressionPassed,
-    regressionTotal,
-    summary,
-  };
-}
-
-function parseGeneration(row) {
-  if (!row) return null;
-  return {
-    ...row,
-    champion_policy: safeJson(row.champion_policy_json, {}),
-    operator_stats: safeJson(row.operator_stats_json, {}),
-  };
-}
-
-async function loadState(db) {
-  const [latestRun, runsResult, specimensResult, revision, runCount, latestGenRow, generationsResult,
-    policy, testCases, rulesResult, liveRun, liveRuns, liveFindings, livePolicy, liveFixes] = await Promise.all([
-    db.prepare("SELECT * FROM runs ORDER BY finished_at DESC LIMIT 1").first(),
-    db.prepare(`
-      SELECT r.*, g.generation, g.regression_total, g.regression_passed
-      FROM runs r LEFT JOIN evolution_generations g ON g.run_id = r.id
-      ORDER BY r.finished_at DESC LIMIT 20
-    `).all(),
-    db.prepare("SELECT * FROM specimens ORDER BY first_seen_at DESC LIMIT 100").all(),
-    db.prepare("SELECT * FROM design_revisions ORDER BY created_at DESC LIMIT 1").first(),
-    db.prepare("SELECT COUNT(*) AS total FROM runs").first(),
-    db.prepare("SELECT * FROM evolution_generations ORDER BY generation DESC LIMIT 1").first(),
-    db.prepare("SELECT * FROM evolution_generations ORDER BY generation DESC LIMIT 20").all(),
-    readPolicy(db),
-    db.prepare("SELECT COUNT(*) AS total FROM test_case_library").first(),
-    db.prepare("SELECT * FROM recommendation_rules ORDER BY operator ASC").all(),
-    db.prepare("SELECT * FROM live_hunt_runs ORDER BY finished_at DESC LIMIT 1").first(),
-    db.prepare("SELECT * FROM live_hunt_runs ORDER BY finished_at DESC LIMIT 10").all(),
-    db.prepare("SELECT * FROM live_hunt_findings ORDER BY first_seen_at DESC LIMIT 50").all(),
-    db.prepare("SELECT value FROM system_state WHERE key = 'live_hunt_policy'").first(),
-    db.prepare("SELECT * FROM live_hunt_fix_events ORDER BY resolved_at DESC LIMIT 20").all(),
-  ]);
-  const latestGeneration = parseGeneration(latestGenRow);
-  const generationIds = resultRows(generationsResult).map((row) => row.generation);
-  let candidates = [];
-  if (generationIds.length) {
-    const latestCandidates = await db.prepare(`
-      SELECT * FROM evolution_candidates WHERE generation = ? ORDER BY training_score DESC, id ASC
-    `).bind(generationIds[0]).all();
-    candidates = resultRows(latestCandidates).map((row) => ({
-      ...row,
-      weights: safeJson(row.weights_json, {}),
-      findings: safeJson(row.findings_json, []),
-      operator_stats: safeJson(row.operator_stats_json, {}),
-    }));
-  }
-  const generations = resultRows(generationsResult).map(parseGeneration);
-  const specimens = resultRows(specimensResult);
-  const runRows = resultRows(runsResult);
-  const currentRun = latestRun || null;
-  const totalChecks = Number(currentRun?.checks_total || 0);
-  const branchesCovered = Number(latestGeneration?.branches_covered || 0);
-  return {
-    status: currentRun ? "ready" : "idle",
-    framework: { name: "Bug Hunter", version: "0.2.0", phase: "evolving-strategy", rsiEnabled: true, benchmark: "synthetic" },
-    totals: { runs: Number(runCount?.total || 0) },
-    latestRun: currentRun,
-    runs: runRows,
-    specimens,
-    designRevision: revision || null,
-    metrics: {
-      checks: totalChecks,
-      harnessPassRate: totalChecks ? Math.round(Number(currentRun.harness_passed || 0) / totalChecks * 100) : 100,
-      fixturesDetected: Number(currentRun?.fixtures_detected || 0),
-      knownSpecimens: Number((await db.prepare("SELECT COUNT(*) AS total FROM specimens").first())?.total || 0),
-      generation: Number(latestGeneration?.generation || 0),
-      branchCoverage: BENCHMARK_BRANCHES_TOTAL ? Math.round(branchesCovered / BENCHMARK_BRANCHES_TOTAL * 100) : 0,
-      branchesCovered,
-      branchesTotal: BENCHMARK_BRANCHES_TOTAL,
-      evolutionScore: Number(latestGeneration?.champion_score || 0),
-      holdoutScore: Number(latestGeneration?.champion_holdout_score || 0),
-      syntheticBenchmark: true,
-    },
-    evolution: {
-      policy,
-      latest: latestGeneration ? { ...latestGeneration, candidates } : null,
-      generations,
-      testCaseCount: Number(testCases?.total || 0),
-      recommendationRules: resultRows(rulesResult),
-      operatorLabels: OPERATOR_LABELS,
-    },
-    liveHunt: {
-      target: "本项目真实 API",
-      latest: liveRun || null,
-      runs: resultRows(liveRuns),
-      findings: resultRows(liveFindings),
-      fixes: resultRows(liveFixes),
-      policy: safeJson(livePolicy?.value, { version: 1, cursor: 0, focus: "balanced" }),
-      evidence: liveRun ? resultRows(await db.prepare(
-        "SELECT * FROM live_hunt_evidence WHERE run_id = ? ORDER BY probe_id"
-      ).bind(liveRun.id).all()) : [],
-    },
-    schedule: { cron: "0 1 * * *", utc: "01:00", local: "10:00 Asia/Seoul" },
-  };
-}
 
 function sameOrigin(request) {
   const origin = request.headers.get("origin");
   return Boolean(origin && origin === new URL(request.url).origin);
 }
 
+function authorized(request, env) {
+  const expected = env.HUNTER_TOKEN;
+  const given = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!expected || given.length !== expected.length) return false;
+  let diff = 0;
+  for (let index = 0; index < expected.length; index += 1) diff |= expected.charCodeAt(index) ^ given.charCodeAt(index);
+  return diff === 0;
+}
+
+async function claimBucket(db, key) {
+  const result = await db.prepare("INSERT OR IGNORE INTO manual_run_limits(bucket, created_at) VALUES (?, ?)")
+    .bind(`${key}:${Math.floor(Date.now() / 60_000)}`, new Date().toISOString()).run();
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
+function deps(env) {
+  return {
+    gh: createGitHub({ token: env.GITHUB_TOKEN }),
+    llm: createLlm({ apiKey: env.CMD_API_KEY, endpoint: env.CMD_API_URL || undefined, model: env.CMD_MODEL || undefined }),
+  };
+}
+
+async function readBody(request) {
+  try { return await request.json(); } catch { return null; }
+}
+
+async function loadState(db, env) {
+  await ensureGenesis(db, new Date());
+  const [playbooks, rounds, scans, opportunities, events, steps, coverage, totals, trend] = await Promise.all([
+    db.prepare("SELECT version, parent, status, created_at, diff_json, metrics_json, reason FROM playbooks ORDER BY version").all(),
+    db.prepare(`SELECT r.*, (SELECT COUNT(*) FROM repo_scans s WHERE s.round_id = r.id) AS repos,
+      (SELECT COUNT(*) FROM opportunities o WHERE o.round_id = r.id) AS found,
+      (SELECT COUNT(*) FROM opportunities o WHERE o.round_id = r.id AND o.status != 'discarded') AS verified,
+      (SELECT decision FROM evolution_steps e WHERE e.round_id = r.id) AS decision
+      FROM rounds r ORDER BY day DESC LIMIT 30`).all(),
+    db.prepare(`SELECT id, round_id, repo, track, arm, playbook_version, pre_score, status, profile, facts_json,
+      pain_points_json, llm_status, error, scanned_at FROM repo_scans ORDER BY rowid DESC LIMIT 20`).all(),
+    db.prepare(`SELECT id, round_id, repo, track, write_policy, profile, type, title, summary, evidence_json, verification_json,
+      effort, confidence, priority, source, arm, playbook_version, status, status_reason, pr_url, outcome, team_verdict, reward,
+      created_at, updated_at FROM opportunities ORDER BY created_at DESC, priority DESC LIMIT 80`).all(),
+    db.prepare("SELECT * FROM events ORDER BY at DESC LIMIT 40").all(),
+    db.prepare("SELECT * FROM evolution_steps ORDER BY at DESC LIMIT 20").all(),
+    db.prepare(`SELECT repo, type, COUNT(*) AS found, SUM(status != 'discarded') AS verified,
+      SUM(status IN ('ready-for-review', 'submitted')) AS fixed, SUM(outcome = 'merged') AS merged
+      FROM opportunities GROUP BY repo, type`).all(),
+    db.prepare(`SELECT (SELECT COUNT(DISTINCT repo) FROM repo_scans WHERE status = 'done') AS repos,
+      (SELECT COUNT(*) FROM opportunities) AS found,
+      (SELECT COUNT(*) FROM opportunities WHERE status != 'discarded') AS verified,
+      (SELECT COUNT(*) FROM opportunities WHERE status IN ('ready-for-review', 'submitted')) AS fixed,
+      (SELECT COUNT(*) FROM opportunities WHERE status = 'submitted') AS submitted,
+      (SELECT COUNT(*) FROM opportunities WHERE outcome = 'merged') AS merged,
+      (SELECT COUNT(*) FROM opportunities WHERE reward IS NOT NULL) AS settled,
+      (SELECT ROUND(AVG(reward), 3) FROM opportunities WHERE reward IS NOT NULL) AS avg_reward,
+      (SELECT COUNT(*) FROM targets WHERE active = 1) AS targets`).first(),
+    db.prepare(`SELECT round_id, ROUND(AVG(reward), 3) AS avg_reward, COUNT(*) AS n FROM opportunities
+      WHERE reward IS NOT NULL GROUP BY round_id ORDER BY round_id DESC LIMIT 30`).all(),
+  ]);
+  const { champion, challenger } = await loadPlaybooks(db);
+  const parse = (row, fields) => ({ ...row, ...Object.fromEntries(fields.map((field) => [field.replace(/_json$/, ""), safeJson(row[field], null)])) });
+  return {
+    framework: { name: "Bug Hunter", version: VERSION },
+    capabilities: {
+      llm: Boolean(env.CMD_API_KEY),
+      githubToken: Boolean(env.GITHUB_TOKEN),
+      executor: Boolean(env.HUNTER_TOKEN),
+      internalRepos: Boolean(env.INTERNAL_REPOS),
+      ossRepos: Boolean(env.OSS_REPOS),
+      discovery: env.DISCOVERY !== "off",
+    },
+    vocab: { goals: GOALS, types: OPPORTUNITY_TYPES, profiles: PROFILES, features: REPO_FEATURES, limits: LIMITS },
+    champion,
+    challenger,
+    playbooks: rows(playbooks).map((row) => parse(row, ["diff_json", "metrics_json"])),
+    rounds: rows(rounds),
+    scans: rows(scans).map((row) => parse(row, ["facts_json", "pain_points_json"])),
+    opportunities: rows(opportunities).map((row) => parse(row, ["evidence_json", "verification_json"])),
+    events: rows(events),
+    evolution: rows(steps).map((row) => parse(row, ["metrics_json"])),
+    coverage: rows(coverage),
+    totals: totals || {},
+    trend: rows(trend).reverse(),
+    schedule: { cron: "*/20 * * * *", note: "每 20 分钟推进一步，每天一轮（UTC 日期）" },
+  };
+}
+
+async function claimQueue(db, limit) {
+  const { champion } = await loadPlaybooks(db);
+  const queued = rows(await db.prepare(`SELECT * FROM opportunities WHERE status = 'queued' ORDER BY priority DESC LIMIT ?`).bind(limit).all());
+  const at = new Date().toISOString();
+  if (queued.length) {
+    await db.batch(queued.map((opp) => db.prepare("UPDATE opportunities SET status = 'claimed', updated_at = ? WHERE id = ? AND status = 'queued'").bind(at, opp.id)));
+  }
+  return {
+    lessons: champion.lessons,
+    prStyle: champion.prStyle,
+    playbookVersion: champion.version,
+    tasks: queued.map((opp) => ({
+      id: opp.id, repo: opp.repo, track: opp.track, writePolicy: opp.write_policy, profile: opp.profile, type: opp.type,
+      title: opp.title, summary: opp.summary, fixPlan: opp.fix_plan, evidence: safeJson(opp.evidence_json, []),
+    })),
+  };
+}
+
+async function recordAttempt(db, body) {
+  if (!body?.id || !ATTEMPT_STATUSES.has(body.status)) return json({ error: "id and a valid status are required" }, 400);
+  const opp = await db.prepare("SELECT id, write_policy, status FROM opportunities WHERE id = ?").bind(body.id).first();
+  if (!opp) return json({ error: "Unknown opportunity" }, 404);
+  if (!["queued", "claimed", "ready-for-review", "tests-failed"].includes(opp.status)) {
+    return json({ error: `Opportunity is ${opp.status}; no attempt expected` }, 409);
+  }
+  let prUrl = null;
+  if (body.status === "submitted") {
+    if (opp.write_policy !== "pr") return json({ error: `write_policy is ${opp.write_policy}; PR submission not allowed` }, 409);
+    if (!parsePullUrl(body.prUrl)) return json({ error: "submitted requires a GitHub pull request URL" }, 400);
+    prUrl = body.prUrl;
+  }
+  const at = new Date().toISOString();
+  const reason = String(body.reason || "").slice(0, 600);
+  await db.batch([
+    db.prepare(`UPDATE opportunities SET status = ?, status_reason = ?, patch = COALESCE(?, patch), test_log = COALESCE(?, test_log),
+      pr_url = COALESCE(?, pr_url), updated_at = ? WHERE id = ?`).bind(body.status, reason,
+      body.patch ? String(body.patch).slice(0, 60000) : null, body.testLog ? String(body.testLog).slice(-8000) : null, prUrl, at, body.id),
+    db.prepare("INSERT INTO events(id, opportunity_id, at, kind, detail) VALUES (?, ?, ?, ?, ?)")
+      .bind(`${body.id}:${body.status}:${at}`, body.id, at, body.status, reason || prUrl || body.status),
+    db.prepare("INSERT INTO feedback(id, opportunity_id, at, source, verdict, note) VALUES (?, ?, ?, 'executor', ?, ?)")
+      .bind(`${body.id}:executor:${at}`, body.id, at, body.status, reason),
+  ]);
+  return json({ ok: true, id: body.id, status: body.status });
+}
+
+async function recordTeamFeedback(db, body) {
+  if (!body?.id || !["useful", "not-useful"].includes(body.verdict)) return json({ error: "id and verdict are required" }, 400);
+  const opp = await db.prepare("SELECT id FROM opportunities WHERE id = ?").bind(body.id).first();
+  if (!opp) return json({ error: "Unknown opportunity" }, 404);
+  const at = new Date().toISOString();
+  const note = String(body.note || "").slice(0, 300);
+  await db.batch([
+    db.prepare("UPDATE opportunities SET team_verdict = ?, updated_at = ? WHERE id = ?").bind(body.verdict, at, body.id),
+    db.prepare("INSERT INTO feedback(id, opportunity_id, at, source, verdict, note) VALUES (?, ?, ?, 'team', ?, ?)")
+      .bind(`${body.id}:team:${at}`, body.id, at, body.verdict, note),
+    db.prepare("INSERT INTO events(id, opportunity_id, at, kind, detail) VALUES (?, ?, ?, 'team-feedback', ?)")
+      .bind(`${body.id}:team:${at}`, body.id, at, `团队反馈：${body.verdict === "useful" ? "有用" : "没用"}${note ? ` — ${note}` : ""}`),
+  ]);
+  return json({ ok: true });
+}
+
+async function addTarget(db, body) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(body?.id || "") || !["open-source", "internal"].includes(body.track)) {
+    return json({ error: "id (owner/repo) and track are required" }, 400);
+  }
+  const policy = ["readonly", "review", "pr"].includes(body.writePolicy) ? body.writePolicy : "readonly";
+  await db.prepare(`INSERT INTO targets(id, track, write_policy, source, added_at) VALUES (?, ?, ?, 'config', ?)
+    ON CONFLICT(id) DO UPDATE SET track = excluded.track, write_policy = excluded.write_policy, active = 1`)
+    .bind(body.id, body.track, policy, new Date().toISOString()).run();
+  return json({ ok: true, id: body.id, track: body.track, writePolicy: policy }, 201);
+}
+
 const worker = {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/api/health") {
+    const { pathname } = url;
+    if (pathname === "/api/health") {
       if (request.method !== "GET") {
         const response = json({ error: "Method not allowed" }, 405);
         response.headers.set("allow", "GET");
         return response;
       }
-      return json({ ok: true, service: "bug-hunter-rsi", phase: "evolving-strategy" });
+      return json({ ok: true, service: "bug-hunter-rsi", version: VERSION });
     }
-    if (url.pathname === "/api/catalog" && request.method === "GET") {
-      return json({ samples: sampleCatalog() });
+    if (!pathname.startsWith("/api/")) {
+      return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Assets binding unavailable", { status: 503 });
     }
-    if (url.pathname === "/api/state" && request.method === "GET") {
-      if (!env.DB) return json({ error: "D1 database binding unavailable" }, 503);
-      try { return json(await loadState(env.DB)); }
-      catch (error) { return json({ error: error instanceof Error ? error.message : "state unavailable" }, 500); }
-    }
-    if (url.pathname === "/api/hunt" && request.method === "POST") {
-      if (!sameOrigin(request)) return json({ error: "Same-origin requests only" }, 403);
-      if (!env.DB) return json({ error: "D1 database binding unavailable" }, 503);
-      try {
-        if (!await claimManualRun(env.DB, "hunt")) return json({ error: "每分钟只允许一次手动捉虫。" }, 429);
-        return json(await runLiveHunt(env.DB, "manual", url.origin, env), 201);
-      } catch (error) {
-        return json({ error: error instanceof Error ? error.message : "hunt failed" }, 500);
+    const route = `${request.method} ${pathname}`;
+    const known = ["GET /api/state", "POST /api/tick", "POST /api/feedback", "GET /api/queue", "POST /api/attempts", "POST /api/targets"];
+    if (!known.includes(route)) return json({ error: "Not found" }, 404);
+    if (!env.DB) return json({ error: "D1 database binding unavailable" }, 503);
+    const db = env.DB;
+    try {
+      if (route === "GET /api/state") return json(await loadState(db, env));
+      if (route === "POST /api/tick" || route === "POST /api/feedback") {
+        if (!sameOrigin(request)) return json({ error: "Same-origin requests only" }, 403);
+        if (route === "POST /api/tick") {
+          if (!await claimBucket(db, "tick")) return json({ error: "每分钟只允许手动推进一次。" }, 429);
+          return json(await tick({ db, env, ...deps(env) }), 201);
+        }
+        const body = await readBody(request);
+        if (!await claimBucket(db, `feedback:${body?.id}`)) return json({ error: "同一条机会每分钟只能反馈一次。" }, 429);
+        return recordTeamFeedback(db, body);
       }
+      if (!authorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      if (route === "GET /api/queue") return json(await claimQueue(db, Math.max(1, Math.min(5, Number(url.searchParams.get("limit")) || 1))));
+      if (route === "POST /api/attempts") return recordAttempt(db, await readBody(request));
+      return addTarget(db, await readBody(request));
+    } catch (error) {
+      console.error(route, error);
+      return json({ error: error instanceof Error ? error.message : "request failed" }, 500);
     }
-    if ((url.pathname === "/api/run" || url.pathname === "/api/evolve") && request.method === "POST") {
-      if (!sameOrigin(request)) return json({ error: "Same-origin requests only" }, 403);
-      if (!env.DB) return json({ error: "D1 database binding unavailable" }, 503);
-      try {
-        if (!await claimManualRun(env.DB)) return json({ error: "每分钟只允许一次手动运行，请稍后再试。" }, 429);
-        const result = url.pathname === "/api/evolve"
-          ? await runEvolution(env.DB, "manual")
-          : await recordSampleRun(env.DB);
-        return json(result, 201);
-      } catch (error) {
-        return json({ error: error instanceof Error ? error.message : "run failed" }, 500);
-      }
-    }
-    if (url.pathname.startsWith("/api/")) return json({ error: "Not found" }, 404);
-    return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Assets binding unavailable", { status: 503 });
   },
 
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil((async () => {
-      try { await runLiveHunt(env.DB, "scheduled", env.HUNT_TARGET_ORIGIN, env); }
-      catch (error) { console.error("Bug Hunter scheduled API hunt failed", error); }
-      try { await runEvolution(env.DB, "scheduled"); }
-      catch (error) { console.error("Bug Hunter scheduled evolution failed", error); }
-    })());
+    ctx.waitUntil(tick({ db: env.DB, env, ...deps(env) })
+      .then((result) => console.log("Bug Hunter tick", JSON.stringify(result)))
+      .catch((error) => console.error("Bug Hunter tick failed", error)));
   },
 };
 
