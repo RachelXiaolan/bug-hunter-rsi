@@ -11,7 +11,7 @@ test("design page tells the Bug Hunter self-evolution story", async () => {
   assert.match(html, /<!doctype html>/i);
   assert.match(html, /<html[^>]+lang="zh-CN"/i);
   assert.match(html, /name="viewport"/i);
-  for (const section of ["overview", "pipeline", "evolution-loop", "tree", "metrics", "playbook", "specimens", "coverage", "history", "architecture"]) {
+  for (const section of ["overview", "inbox", "pipeline", "evolution-loop", "tree", "metrics", "playbook", "specimens", "coverage", "history", "architecture"]) {
     assert.match(html, new RegExp(`id="${section}"`), section);
   }
   for (const term of ["自动化让它每天都跑", "Playbook 进化树", "Bug 标本馆", "测试覆盖图", "修复历史", "团队内部工具", "Cron Trigger", "scheduled()", "D1", "Workers Static Assets", "执行器"]) {

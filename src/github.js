@@ -70,6 +70,10 @@ export function createGitHub({ token, fetcher = fetch } = {}) {
     issue: (full, number) => call(`/repos/${full}/issues/${number}`, { allow404: true }),
     pathExists: async (full, path) => Boolean(await call(`/repos/${full}/contents/${path.split("/").map(encodeURIComponent).join("/")}`, { allow404: true })),
     pull: (full, number) => call(`/repos/${full}/pulls/${number}`, { allow404: true }),
+    issueComments: async (full, number) => {
+      const rows = await call(`/repos/${full}/issues/${number}/comments?per_page=30`);
+      return rows.map((row) => ({ author: row.user?.login, association: row.author_association, body: String(row.body || "").slice(0, 400), at: row.created_at }));
+    },
   };
 }
 

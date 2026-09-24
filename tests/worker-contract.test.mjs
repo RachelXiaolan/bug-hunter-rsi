@@ -7,7 +7,7 @@ const ORIGIN = "https://bug-hunter-rsi.test";
 test("health identifies the service version", async () => {
   const response = await worker.fetch(new Request(`${ORIGIN}/api/health`), {});
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).version, "2.0.0");
+  assert.equal((await response.json()).version, "2.1.0");
 });
 
 test("health rejects unsupported write methods", async () => {

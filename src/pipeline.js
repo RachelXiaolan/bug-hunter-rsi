@@ -20,7 +20,7 @@ function hashRank(text) {
 export function parseTargetList(value, track) {
   return String(value || "").split(/[\s,]+/).map((item) => item.trim()).filter(Boolean).map((item) => {
     const [id, policy] = item.split(":");
-    const fallback = track === "internal" ? "readonly" : "review";
+    const fallback = track === "internal" ? "readonly" : "pr";
     return /^[\w.-]+\/[\w.-]+$/.test(id)
       ? { id, track, writePolicy: ["readonly", "review", "pr"].includes(policy) ? policy : fallback }
       : null;
@@ -90,7 +90,7 @@ async function syncTargets(db, env, gh, champion, now) {
         for (const item of found) {
           discovered += 1;
           writes.push(db.prepare(`INSERT INTO targets(id, track, write_policy, source, added_at, meta_json)
-            VALUES (?, 'open-source', 'review', 'discovered', ?, ?)
+            VALUES (?, 'open-source', 'pr', 'discovered', ?, ?)
             ON CONFLICT(id) DO UPDATE SET meta_json = excluded.meta_json`)
             .bind(item.id, now.toISOString(), JSON.stringify({ stars: item.stars, pushedAt: item.pushedAt, openIssues: item.openIssues, query })));
         }
@@ -108,7 +108,8 @@ async function planRound(db, env, gh, day, now) {
   const synced = await syncTargets(db, env, gh, champion, now);
   const recent = new Date(now.getTime() - 7 * DAY).toISOString();
   const targets = rows(await db.prepare(`SELECT * FROM targets WHERE active = 1
-    AND (track = 'internal' OR last_scanned_at IS NULL OR last_scanned_at < ?)`).bind(recent).all());
+    AND (blocked_until IS NULL OR blocked_until < ?)
+    AND (track = 'internal' OR last_scanned_at IS NULL OR last_scanned_at < ?)`).bind(now.toISOString(), recent).all());
   const internal = targets.filter((target) => target.track === "internal").slice(0, LIMITS.reposPerRound);
   const candidates = targets.filter((target) => target.track === "open-source").map((target) => ({
     id: target.id,
@@ -175,7 +176,7 @@ async function scoutNext(db, gh, llm, round, now) {
 }
 
 async function pollPullRequests(db, gh, now) {
-  const open = rows(await db.prepare(`SELECT id, pr_url, updated_at, maintainer_responded FROM opportunities
+  const open = rows(await db.prepare(`SELECT id, repo, pr_url, updated_at, maintainer_responded FROM opportunities
     WHERE status = 'submitted' AND outcome IS NULL AND pr_url IS NOT NULL ORDER BY updated_at ASC LIMIT 15`).all());
   const writes = [];
   for (const opp of open) {
@@ -192,6 +193,13 @@ async function pollPullRequests(db, gh, now) {
       writes.push(db.prepare("UPDATE opportunities SET outcome = ?, maintainer_responded = ?, updated_at = ? WHERE id = ?")
         .bind(outcome, responded, now.toISOString(), opp.id));
       if (outcome) {
+        const comments = await gh.issueComments(ref.repo, ref.number).catch(() => []);
+        const note = comments.filter((comment) => comment.author !== pull.user?.login).map((comment) => `${comment.author}: ${comment.body}`).slice(-3).join(" ｜ ").slice(0, 800);
+        if (note) writes.push(db.prepare("UPDATE opportunities SET maintainer_note = ? WHERE id = ?").bind(note, opp.id));
+        if (outcome !== "merged") {
+          writes.push(db.prepare("UPDATE targets SET blocked_until = ?, blocked_reason = ? WHERE id = ?")
+            .bind(new Date(now.getTime() + LIMITS.repoCooldownDays * DAY).toISOString(), `PR ${outcome}: ${opp.pr_url}`, opp.repo));
+        }
         writes.push(db.prepare("INSERT OR IGNORE INTO events(id, opportunity_id, at, kind, detail) VALUES (?, ?, ?, ?, ?)")
           .bind(`${opp.id}:pr-${outcome}`, opp.id, now.toISOString(), `pr-${outcome}`, `${opp.pr_url} → ${outcome}`));
         writes.push(db.prepare("INSERT OR IGNORE INTO feedback(id, opportunity_id, at, source, verdict, note) VALUES (?, ?, ?, 'maintainer', ?, ?)")
@@ -224,7 +232,7 @@ async function runEvolution(db, llm, round, now) {
   const samples = rows(await db.prepare(`SELECT * FROM opportunities WHERE reward IS NOT NULL ORDER BY settled_at DESC LIMIT 500`).all())
     .map((row) => ({
       id: row.id, repo: row.repo, title: row.title, profile: row.profile, type: row.type, status: row.status,
-      outcome: row.outcome, teamVerdict: row.team_verdict, note: row.status_reason, reward: row.reward,
+      outcome: row.outcome, teamVerdict: row.team_verdict, note: row.maintainer_note || row.status_reason, reward: row.reward,
       playbookVersion: row.playbook_version, features: safeJson(row.features_json, {}),
     }));
   const latest = await db.prepare("SELECT MAX(version) AS version FROM playbooks").first();

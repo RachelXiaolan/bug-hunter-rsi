@@ -45,6 +45,8 @@ export const LIMITS = Object.freeze({
   challengerMinSamples: 8,
   maxLessons: 12,
   staleDays: 21,
+  repoCooldownDays: 30,
+  maxFollowups: 3,
 });
 
 // Initial guesses only. Every number here is overwritten by evidence as rounds settle.

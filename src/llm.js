@@ -10,7 +10,7 @@ export function parseJsonContent(content) {
   return JSON.parse(candidate);
 }
 
-// Returns { status, data }. Never throws: callers fall back to rule-based behaviour.
+// Returns { status, data, tokens }. Never throws: callers fall back to rule-based behaviour.
 export function createLlm({ apiKey, endpoint = DEFAULT_ENDPOINT, model = DEFAULT_MODEL, fetcher = fetch } = {}) {
   return {
     enabled: Boolean(apiKey),
@@ -31,12 +31,31 @@ export function createLlm({ apiKey, endpoint = DEFAULT_ENDPOINT, model = DEFAULT
         if (!response.ok) return { status: `provider-http-${response.status}`, data: null };
         const payload = await response.json().catch(() => null);
         const content = payload?.choices?.[0]?.message?.content;
-        if (!content) return { status: "provider-empty-content", data: null };
-        try { return { status: "ready", data: parseJsonContent(content) }; }
-        catch { return { status: "provider-content-not-json", data: null }; }
+        const tokens = Number(payload?.usage?.total_tokens || 0);
+        if (!content) return { status: "provider-empty-content", data: null, tokens };
+        try { return { status: "ready", data: parseJsonContent(content), tokens }; }
+        catch { return { status: "provider-content-not-json", data: null, tokens }; }
       } catch (error) {
         return { status: error?.name === "TimeoutError" ? "provider-timeout" : "provider-network-error", data: null };
       }
+    },
+  };
+}
+
+// Wraps an LLM client with a daily call budget recorded in D1 (table usage).
+export function budgeted(llm, { db, source, dailyCalls, today = () => new Date().toISOString().slice(0, 10) }) {
+  return {
+    enabled: llm.enabled,
+    model: llm.model,
+    async json(system, user, options) {
+      const day = today();
+      const row = await db.prepare("SELECT calls FROM usage WHERE day = ? AND source = ?").bind(day, source).first();
+      if (Number(row?.calls || 0) >= dailyCalls) return { status: "budget-exceeded", data: null, tokens: 0 };
+      const answer = await llm.json(system, user, options);
+      await db.prepare(`INSERT INTO usage(day, source, calls, tokens) VALUES (?, ?, 1, ?)
+        ON CONFLICT(day, source) DO UPDATE SET calls = usage.calls + 1, tokens = usage.tokens + excluded.tokens`)
+        .bind(day, source, Number(answer.tokens || 0)).run();
+      return answer;
     },
   };
 }

@@ -6,9 +6,16 @@ compatibility_date = "2026-09-23"
 [vars]
 # Team repos. Default write policy is readonly; append :review or :pr to allow more.
 INTERNAL_REPOS = ""
-# Open-source seed repos, e.g. "owner/repo:pr". Discovery adds more from the playbook's search queries.
+# Open-source seed repos (default write policy pr), e.g. "owner/repo". Discovery adds more from the playbook's search queries.
 OSS_REPOS = ""
 DISCOVERY = "on"
+# Autopilot & cost controls (the only knobs the owner needs to touch)
+AUTO_SUBMIT = "on"                 # "off" = kill switch: patches only, no PRs
+MAX_PRS_PER_DAY = "3"
+MAX_OPEN_PRS_PER_REPO = "1"
+CLA_POLICY = "skip"                # "flag" = submit anyway and remind the owner to sign
+DAILY_LLM_CALLS = "40"             # Worker: diagnosis + reflection
+EXECUTOR_DAILY_LLM_CALLS = "60"    # Executor: patches, self-review, follow-ups
 
 [triggers]
 # Each tick advances today's round by one bounded step: plan → scout one repo → ... → finalize + evolve.

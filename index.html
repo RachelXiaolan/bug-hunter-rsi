@@ -186,7 +186,7 @@
     <a class="brand" href="#overview"><span class="brand-mark">B</span>Bug Hunter</a>
     <nav class="topnav" aria-label="页面导航">
       <a href="#overview">概览</a><a href="#pipeline">流水线</a><a href="#evolution-loop">自进化</a><a href="#tree">进化树</a>
-      <a href="#metrics">看板</a><a href="#playbook">当前打法</a><a href="#specimens">标本馆</a><a href="#coverage">覆盖</a><a href="#history">历史</a><a href="#architecture">架构</a>
+      <a href="#inbox">待验收</a><a href="#metrics">看板</a><a href="#playbook">当前打法</a><a href="#specimens">标本馆</a><a href="#coverage">覆盖</a><a href="#history">历史</a><a href="#architecture">架构</a>
     </nav>
     <span class="status-pill is-waiting" id="status-pill"><span class="status-dot"></span><span id="status-text">读取中…</span></span>
   </header>
@@ -235,8 +235,8 @@
         <article class="step"><h3>证据核对</h3><p>文件是否存在、Issue 是否开放、是否已被认领或已有 PR。模型的话不算证据。</p></article>
         <article class="step hands"><h3>复现与修改</h3><p>执行器领任务、克隆、跑基线测试，按经验生成最小改动。</p></article>
         <article class="step hands"><h3>测试</h3><p>跑仓库自己的测试；失败带日志重试一次，仍失败就记录原因。</p></article>
-        <article class="step hands"><h3>待审核</h3><p>补丁和 PR 描述存档；人工审核后才提交，只读仓库永不提交。</p></article>
-        <article class="step"><h3>收集反馈</h3><p>轮询 PR 合并/关闭/无人理睬，接收团队投票，折算奖励，触发进化。</p></article>
+        <article class="step hands"><h3>自动把关并提 PR</h3><p>改动大小检查、AI 审查、Issue 仍无人认领、今日名额——全部通过才 fork 并提 PR；只读仓库只出补丁。</p></article>
+        <article class="step"><h3>跟进与反馈</h3><p>执行器自动回应 CI 失败和 review 意见；Worker 轮询合并/关闭/无人理睬，接收团队投票，折算奖励，触发进化。</p></article>
       </div>
       <div class="split-note"><div class="badge-icon" aria-hidden="true">⇄</div><p><strong>大脑与双手：</strong>Worker + D1 负责决策和记账；执行器（本地、GitHub Actions 或 Agent）通过 <code>/api/queue</code> 领任务、通过 <code>/api/attempts</code> 回传补丁和测试日志。</p></div>
     </section>
@@ -280,6 +280,20 @@
           <h3 id="node-title">v1</h3>
           <p id="node-reason">读取中…</p>
           <ul class="detail-list" id="node-diff"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-block" id="inbox" aria-labelledby="inbox-title">
+      <div class="section-head">
+        <div><p class="eyebrow">你只需要看这里</p><h2 id="inbox-title">待你验收</h2></div>
+        <p class="section-intro">找 Bug、修复、提 PR、回应 review、总结经验全部自动进行。你的工作只有三件：验收下面的 PR 和补丁、偶尔处理需要真人的事（签 CLA），以及在 Cloudflare 里管理成本上限和密钥。</p>
+      </div>
+      <div class="dark-board">
+        <div class="kpis" id="autopilot"></div>
+        <div class="board-grid">
+          <div class="panel"><h3>进行中的 PR</h3><p>自动提交、等待维护者处理；有新 review 或 CI 失败时执行器会自动跟进。</p><ul class="lessons" id="open-prs"></ul></div>
+          <div class="panel"><h3>需要真人的事</h3><p>机器人做不了的动作，以及被暂停的仓库。</p><ul class="lessons" id="attention"></ul></div>
         </div>
       </div>
     </section>
@@ -364,22 +378,26 @@
           <div><strong>Cloudflare Worker</strong>GitHub API 侦察、CommandCode AI 诊断与反思、证据核对、执行器与团队反馈接口。</div>
           <div><strong>D1</strong>targets · rounds · repo_scans · opportunities · events · feedback · playbooks · evolution_steps。</div>
           <div><strong>Workers Static Assets</strong>本页面：读取 <code>/api/state</code> 渲染进化树、看板和历史。</div>
-          <div><strong>执行器 executor/hunt-fix.mjs</strong>克隆、测试、修改、回传；<code>--submit</code> 在人工审核后提 PR。</div>
+          <div><strong>执行器 executor/hunt-fix.mjs（云端 Linux 机器，每 2 小时）</strong>跟进已提交的 PR → 领新任务 → 在容器里跑测试 → 改代码 → 自动把关 → fork 并提 PR。</div>
         </div>
         <article class="card">
           <h3>配置</h3>
           <p>Secret 只放在 Cloudflare，不进仓库、页面或数据库。</p>
-<pre>npx wrangler secret put CMD_API_KEY    # AI 诊断与反思
-npx wrangler secret put GITHUB_TOKEN   # 可选：只读，提高限额
-npx wrangler secret put HUNTER_TOKEN   # 执行器鉴权
+<pre># Cloudflare Secrets
+CMD_API_KEY    # AI
+GITHUB_TOKEN   # 只读令牌
+HUNTER_TOKEN   # 执行器暗号
 
-# wrangler.toml [vars]
-INTERNAL_REPOS = "team/recruit-dashboard"      # 默认只读
-OSS_REPOS      = "owner/repo:pr"               # 可提 PR
-DISCOVERY      = "on"
+# Cloudflare 变量（成本与开关）
+AUTO_SUBMIT=on   MAX_PRS_PER_DAY=3
+DAILY_LLM_CALLS=40   EXECUTOR_DAILY_LLM_CALLS=60
+CLA_POLICY=skip
+INTERNAL_REPOS="team/tool"   # 默认只读
+OSS_REPOS="owner/repo"       # 默认可提 PR
 
-npx wrangler d1 migrations apply bug-hunter-rsi --remote
-HUNTER_URL=… HUNTER_TOKEN=… CMD_API_KEY=… node executor/hunt-fix.mjs</pre>
+# 云端机器（一次性）
+bash executor/setup-linux.sh
+# 然后填 ~/.bug-hunter/env</pre>
         </article>
       </div>
     </section>
@@ -495,8 +513,33 @@ HUNTER_URL=… HUNTER_TOKEN=… CMD_API_KEY=… node executor/hunt-fix.mjs</pre>
         replace("reward-trend", el("div", { class: "bars" }, trend.map((row, index) => el("div", { class: `bar${row.avg_reward < 0 ? " negative" : ""}`, style: `height:${Math.max(4, Math.abs(row.avg_reward) / peak * 100)}%`, title: `${row.round_id}: ${row.avg_reward}（${row.n} 个）` }, index % Math.ceil(trend.length / 6) === 0 ? el("small", {}, row.round_id.slice(-5)) : null))));
       }
       const caps = state.capabilities;
-      const list = [["AI 诊断与反思（CMD_API_KEY）", caps.llm], ["GitHub 令牌（可选）", caps.githubToken], ["执行器鉴权（HUNTER_TOKEN）", caps.executor], ["内部仓库清单", caps.internalRepos], ["开源种子仓库", caps.ossRepos], ["自动发现开源仓库", caps.discovery]];
+      const list = [["AI 诊断与反思（CMD_API_KEY）", caps.llm], ["GitHub 令牌（可选）", caps.githubToken], ["执行器鉴权（HUNTER_TOKEN）", caps.executor], ["自动提 PR（AUTO_SUBMIT）", state.autopilot.autoSubmit], ["内部仓库清单", caps.internalRepos], ["开源种子仓库", caps.ossRepos], ["自动发现开源仓库", caps.discovery]];
       replace("capabilities", list.map(([label, on]) => el("li", {}, el("span", {}, label), el("span", { class: on ? "cap-on" : "cap-off" }, on ? "已接" : "未接"))));
+    }
+
+    function renderInbox() {
+      const pilot = state.autopilot;
+      const today = new Date().toISOString().slice(0, 10);
+      const usage = (source) => state.usage.find((row) => row.day === today && row.source === source) || { calls: 0, tokens: 0 };
+      const worker = usage("worker"), executor = usage("executor");
+      const tiles = [
+        ["自动提 PR", pilot.autoSubmit ? "开" : "关"],
+        ["今日 PR / 上限", `${pilot.prsToday} / ${pilot.maxPrsPerDay}`],
+        ["今日 AI 调用（诊断）", `${worker.calls} / ${pilot.workerDailyLlmCalls}`],
+        ["今日 AI 调用（修复）", `${executor.calls} / ${pilot.executorDailyLlmCalls}`],
+        ["今日 tokens", Number(worker.tokens) + Number(executor.tokens)],
+        ["CLA 仓库", pilot.claPolicy === "skip" ? "跳过" : "提交并提醒"],
+      ];
+      replace("autopilot", tiles.map(([label, value]) => el("div", { class: "kpi" }, el("span", {}, label), el("strong", {}, value))));
+      const prs = state.inbox.openPrs;
+      replace("open-prs", prs.length ? prs.map((pr) => el("li", {},
+        safeUrl(pr.pr_url) ? el("a", { href: safeUrl(pr.pr_url), target: "_blank", rel: "noopener" }, pr.title) : pr.title,
+        el("small", {}, `${pr.repo} · 提交于 ${fmtTime(pr.submitted_at)} · ${pr.maintainer_responded ? "维护者已回复" : "等待回复"} · 已自动跟进 ${pr.followup_count} 次`))) : el("li", {}, "暂无进行中的 PR。"));
+      const items = [
+        ...state.inbox.attention.map((event) => el("li", {}, event.detail, el("small", {}, `${({ "needs-cla": "需要签 CLA", "followup-limit": "自动跟进已达上限", "needs-human": "需要人工" })[event.kind] || event.kind} · ${fmtTime(event.at)}`))),
+        ...state.inbox.blocked.map((row) => el("li", {}, repoLink(row.id), el("small", {}, `暂停到 ${fmtTime(row.blocked_until)} · ${row.blocked_reason || ""}`))),
+      ];
+      replace("attention", items.length ? items : el("li", {}, "没有需要你处理的事。"));
     }
 
     function renderPlaybook() {
@@ -595,6 +638,7 @@ HUNTER_URL=… HUNTER_TOKEN=… CMD_API_KEY=… node executor/hunt-fix.mjs</pre>
         $("status-pill").classList.toggle("is-waiting", !state.rounds.length);
         $("status-text").textContent = state.rounds.length ? `最近一轮 ${state.rounds[0].day}` : "等待第一轮";
         renderKpis();
+        renderInbox();
         renderPlaybook();
         renderSpecimens();
         renderCoverage();

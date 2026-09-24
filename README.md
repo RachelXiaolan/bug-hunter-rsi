@@ -15,7 +15,9 @@
 | `src/reward.js` | 按目标（contributor / craft / internal）折算奖励 |
 | `src/evolution.js` | 候选打法生成、离线回放、晋级 / 挑战者 / 淘汰 |
 | `src/config.js` | 初始 Playbook 与上限 |
-| `executor/hunt-fix.mjs` | 执行器：领任务、克隆、测试、修改、回传；`--submit <id>` 人工审核后提 PR |
+| `executor/hunt-fix.mjs` | 执行器：跟进已提交 PR → 领任务 → 容器内测试 → 修改 → 自动把关 → fork 并提 PR |
+| `executor/policy.mjs` | 提交前的自动关卡：仓库规则（AI 禁令 / CLA / DCO）、diff 大小检查、PR 描述 |
+| `executor/setup-linux.sh` | 云端 Linux 机器（如 Grok Bot 云电脑）一键安装 + 每 2 小时定时运行 |
 | `index.html` | 项目设计页 + 进展看板（进化树、标本馆、覆盖、历史） |
 
 ## API
@@ -28,6 +30,10 @@
 | `GET /api/queue?limit=n` | `HUNTER_TOKEN` | 执行器领取任务 |
 | `POST /api/attempts` | `HUNTER_TOKEN` | 回传 `{id, status, reason, patch, testLog, prUrl}` |
 | `POST /api/targets` | `HUNTER_TOKEN` | 增加仓库 `{id, track, writePolicy}` |
+| `POST /api/permit` | `HUNTER_TOKEN` | 提 PR 前申请许可（总开关、每日上限、每仓库未结 PR） |
+| `GET /api/followups` | `HUNTER_TOKEN` | 需要跟进的已提交 PR |
+| `POST /api/events` | `HUNTER_TOKEN` | 跟进记录、需要真人的事 |
+| `POST /api/usage` | `HUNTER_TOKEN` | 执行器上报 AI 用量 |
 
 ## 部署
 
@@ -42,15 +48,17 @@ npx wrangler deploy
 
 旧版合成实验的表（`evolution_*`、`live_hunt_*`、`specimens`、`runs` 等）不再读写，确认没用后可以手动删除。
 
-## 执行器
+## 执行器（全自动）
 
-执行器会运行目标仓库的测试，也就是会执行别人的代码，请放在隔离环境里跑（容器或 CI runner）。
+在一台云端 Linux 机器上一次性安装（会装 git、Node、Python、Go、Docker 并加每 2 小时一次的定时任务）：
 
 ```bash
-HUNTER_URL=https://bug-hunter-rsi.rachel-lu.workers.dev HUNTER_TOKEN=… CMD_API_KEY=… node executor/hunt-fix.mjs
-# 审核 executor/out/<id>/ 之后，仅限 write_policy=pr 的仓库：
-node executor/hunt-fix.mjs --submit <id>
+BRANCH=main bash executor/setup-linux.sh
+# 然后编辑 ~/.bug-hunter/env，填 HUNTER_TOKEN、CMD_API_KEY、GH_PR_TOKEN
+~/.bug-hunter/run.sh    # 手动先跑一次，日志在 ~/.bug-hunter/executor.log
 ```
+
+`GH_PR_TOKEN` 是提 PR 账号的 classic token，只勾 `public_repo`。执行器会运行目标仓库的测试，有 Docker 时在容器里跑，只挂载代码目录。
 
 ## 本地验证
 

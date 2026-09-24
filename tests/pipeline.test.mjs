@@ -78,6 +78,10 @@ test("executor, PR tracking and team feedback close the loop into evolution", as
         const url = `https://github.com/${task.repo}/pull/${prNumber}`;
         pullsById[`${task.repo}#${prNumber}`] = { merged_at: "2026-10-20T00:00:00Z", state: "closed", comments: 2, created_at: "2026-10-01T00:00:00Z" };
         prNumber += 1;
+        const early = await call("/api/attempts", { method: "POST", headers: authed, body: JSON.stringify({ id: task.id, status: "submitted", prUrl: url }) });
+        assert.equal(early.status, 409, "no PR without a permit");
+        const permit = await (await call("/api/permit", { method: "POST", headers: authed, body: JSON.stringify({ id: task.id }) })).json();
+        if (!permit.allowed) continue;
         const response = await call("/api/attempts", { method: "POST", headers: authed, body: JSON.stringify({ id: task.id, status: "submitted", prUrl: url }) });
         assert.equal(response.status, 200);
       }
@@ -90,6 +94,27 @@ test("executor, PR tracking and team feedback close the loop into evolution", as
   assert.ok(state.playbooks.length >= 1);
   assert.equal(state.playbooks[0].version, 1);
   assert.ok(state.coverage.length > 0);
+  assert.ok(state.autopilot.maxPrsPerDay >= 1);
+  assert.ok(state.opportunities.some((opp) => opp.outcome === "merged"));
+});
+
+test("permits enforce the kill switch, write policy and daily cap", async () => {
+  const db = await createD1(migrations);
+  const gh = fakeGitHub({ "team/dashboard": fakeRepo("team/dashboard"), "oss/cli": fakeRepo("oss/cli") });
+  await runDay(db, gh, "2026-09-24");
+  const base = env(db);
+  const call = (path, init, extra = {}) => worker.fetch(new Request(`${ORIGIN}${path}`, init), { ...base, ...extra });
+  const authed = { authorization: "Bearer secret-token", "content-type": "application/json" };
+  const { tasks } = await (await call("/api/queue?limit=5", { headers: authed })).json();
+  const internal = tasks.find((task) => task.repo === "team/dashboard");
+  const oss = tasks.find((task) => task.repo === "oss/cli");
+  const ask = async (id, extra) => (await call("/api/permit", { method: "POST", headers: authed, body: JSON.stringify({ id }) }, extra)).json();
+  assert.equal((await ask(internal.id)).allowed, false, "readonly repos never get PRs");
+  assert.equal((await ask(oss.id, { AUTO_SUBMIT: "off" })).allowed, false);
+  assert.equal((await ask(oss.id, { MAX_PRS_PER_DAY: "0" })).allowed, false);
+  assert.equal((await ask(oss.id)).allowed, true);
+  const usage = await (await call("/api/usage", { method: "POST", headers: authed, body: JSON.stringify({ calls: 3, tokens: 1200 }) })).json();
+  assert.deepEqual({ ...usage.today }, { calls: 3, tokens: 1200 });
 });
 
 test("state endpoint works on an empty database", async () => {

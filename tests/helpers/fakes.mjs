@@ -42,6 +42,7 @@ export function fakeGitHub(repos, { search = [], pullsById = {} } = {}) {
     issue: async (full, number) => get(full).issueDetails[number] || null,
     pathExists: async (full, path) => get(full).files.has(path),
     pull: async (full, number) => pullsById[`${full}#${number}`] || null,
+    issueComments: async () => [{ author: "maintainer", association: "OWNER", body: "Thanks, looks good.", at: "2026-10-02T00:00:00Z" }],
   };
 }
 
